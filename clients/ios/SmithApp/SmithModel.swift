@@ -1,4 +1,4 @@
-﻿import Combine
+import Combine
 import Foundation
 import UIKit
 
@@ -10,7 +10,7 @@ enum SmithEnvironmentMode: Equatable {
 
 @MainActor
 final class SmithModel: ObservableObject {
-    @Published var serverAddress = UserDefaults.standard.string(forKey: "smith.serverURL") ?? ""
+    @Published var serverAddress = UserDefaults.standard.string(forKey: "smith.serverURL") ?? "https://farhan.tail816322.ts.net"
     @Published var accessCode = ""
     @Published var status = SmithKeychain.get("device-token") == nil ? "SETUP REQUIRED" : "READY"
     @Published private(set) var environment: SmithEnvironmentMode = .idle

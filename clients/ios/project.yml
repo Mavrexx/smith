@@ -14,10 +14,11 @@ targets:
     type: application
     platform: iOS
     sources:
-      - SmithApp
+      - path: SmithApp
+        excludes:
+          - Info.plist
+          - SmithLite-Info.plist
       - Shared
-    info:
-      path: SmithApp/Info.plist
     entitlements:
       path: SmithApp/Smith.entitlements
     settings:
@@ -26,6 +27,8 @@ targets:
         PRODUCT_NAME: Smith
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_FILE: SmithApp/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
     dependencies:
       - target: SmithWidgets
         embed: true
@@ -70,40 +73,46 @@ targets:
     type: app-extension
     platform: iOS
     sources:
-      - SmithWidgets
+      - path: SmithWidgets
+        excludes:
+          - Info.plist
       - Shared
-    info:
-      path: SmithWidgets/Info.plist
     entitlements:
       path: SmithWidgets/SmithWidgets.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.farhan.smith.widgets
+        INFOPLIST_FILE: SmithWidgets/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
   SmithShare:
     type: app-extension
     platform: iOS
     sources:
-      - SmithShare
+      - path: SmithShare
+        excludes:
+          - Info.plist
       - Shared/SmithRoutes.swift
-    info:
-      path: SmithShare/Info.plist
     entitlements:
       path: SmithShare/SmithShare.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.farhan.smith.share
+        INFOPLIST_FILE: SmithShare/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
   SmithNotificationService:
     type: app-extension
     platform: iOS
     sources:
-      - SmithNotificationService
-    info:
-      path: SmithNotificationService/Info.plist
+      - path: SmithNotificationService
+        excludes:
+          - Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.farhan.smith.notification-service
+        INFOPLIST_FILE: SmithNotificationService/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
   SmithTests:
     type: bundle.unit-test
