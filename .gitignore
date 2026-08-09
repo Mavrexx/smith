@@ -1,0 +1,7 @@
+clients/ios/build/
+clients/ios/Smith.xcodeproj/
+clients/ios/Payload/
+clients/ios/*.ipa
+clients/ios/*.sha256
+*.xcuserstate
+xcuserdata/

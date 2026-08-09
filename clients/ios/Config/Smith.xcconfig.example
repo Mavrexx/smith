@@ -1,0 +1,4 @@
+// Copy to Smith.xcconfig locally and add it to the Xcode project configuration.
+// This is not a secret file. The app never contains Gemini or Neon credentials.
+SMITH_DEFAULT_SERVER_URL = https:/$()/YOUR-TAILNET-HOST.ts.net
+SMITH_APP_GROUP = group.com.farhan.smith

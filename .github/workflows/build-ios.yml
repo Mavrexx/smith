@@ -1,0 +1,64 @@
+name: Build unsigned Smith IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "clients/ios/**"
+      - ".github/workflows/build-ios.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: clients/ios
+        run: xcodegen generate
+
+      - name: Build unsigned device app
+        working-directory: clients/ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Smith.xcodeproj \
+            -scheme Smith \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: clients/ios
+        run: |
+          set -euo pipefail
+          APP_PATH="$PWD/build/Build/Products/Release-iphoneos/Smith.app"
+          test -d "$APP_PATH"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/Smith.app
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload Smith-unsigned.ipa
+          shasum -a 256 Smith-unsigned.ipa | tee Smith-unsigned.ipa.sha256
+
+      - name: Upload Smith IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Smith-unsigned-ipa
+          path: |
+            clients/ios/Smith-unsigned.ipa
+            clients/ios/Smith-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 7
