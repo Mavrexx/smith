@@ -9,6 +9,24 @@ struct SmithSafariDestination: Identifiable {
 }
 
 @MainActor
+final class SmithMicrophoneMeter: ObservableObject {
+    @Published private(set) var level: Float = 0
+    private var lastPublishedAt: TimeInterval = 0
+
+    func offer(_ value: Float) {
+        let now = Date.timeIntervalSinceReferenceDate
+        guard now - lastPublishedAt >= 0.12 else { return }
+        lastPublishedAt = now
+        level = value
+    }
+
+    func reset() {
+        lastPublishedAt = 0
+        level = 0
+    }
+}
+
+@MainActor
 final class SmithVoiceSession: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var state = "IDLE"
@@ -17,8 +35,9 @@ final class SmithVoiceSession: ObservableObject {
     @Published private(set) var assistantTranscript = ""
     @Published private(set) var lastError: String?
     @Published private(set) var muted = false
-    @Published private(set) var microphoneLevel: Float = 0
+    let microphoneMeter = SmithMicrophoneMeter()
     @Published private(set) var audioPacketsSent = 0
+    var microphoneLevel: Float { microphoneMeter.level }
     @Published private(set) var textModeAvailable = false
     @Published private(set) var outputVolume = 66
     @Published var safariDestination: SmithSafariDestination?
@@ -33,6 +52,7 @@ final class SmithVoiceSession: ObservableObject {
     private var shouldRun = false
     private var attempt = 0
     private var captureStarted = false
+    private var totalAudioPacketsSent = 0
 
     init(api: SmithAPI) {
         self.api = api
@@ -145,7 +165,7 @@ final class SmithVoiceSession: ObservableObject {
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
         captureStarted = false
-        microphoneLevel = 0
+        microphoneMeter.reset()
         connected = false
         state = "IDLE"
         audio.stop()
@@ -271,14 +291,17 @@ final class SmithVoiceSession: ObservableObject {
             try audio.startCapture { [weak self] data, level in
                 Task { @MainActor in
                     guard let self, self.shouldRun else { return }
-                    self.microphoneLevel = level
+                    self.microphoneMeter.offer(level)
                     guard self.connected, !self.muted else { return }
                     do {
                         try await self.send([
                             "type": "audio",
                             "data": data.base64EncodedString(),
                         ])
-                        self.audioPacketsSent += 1
+                        self.totalAudioPacketsSent += 1
+                        if self.audioPacketsSent == 0 || self.totalAudioPacketsSent % 50 == 0 {
+                            self.audioPacketsSent = self.totalAudioPacketsSent
+                        }
                     } catch {
                         self.lastError = "Microphone stream failed: \(error.localizedDescription)"
                     }

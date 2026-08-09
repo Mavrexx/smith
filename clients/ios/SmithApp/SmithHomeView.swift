@@ -331,29 +331,36 @@ struct SmithSafariView: UIViewControllerRepresentable {
 struct SmithCoreOrb: View {
     @ObservedObject var voice: SmithVoiceSession
     let diameter: CGFloat
-    @State private var orbit = false
-    @State private var pulse = false
+
     var body: some View {
         ZStack {
             ForEach(0..<3, id: \.self) { index in
                 Circle().stroke(.cyan.opacity(0.08 - Double(index) * 0.015), lineWidth: 1)
-                    .frame(width: diameter * (1.05 + CGFloat(index) * 0.10)).scaleEffect(pulse ? 1.025 : 0.975)
+                    .frame(width: diameter * (1.05 + CGFloat(index) * 0.10))
             }
             Circle()
                 .stroke(AngularGradient(colors: [.clear, .cyan, .white.opacity(0.8), .blue, .clear], center: .center), lineWidth: max(2, diameter * 0.017))
-                .frame(width: diameter, height: diameter).rotationEffect(.degrees(orbit ? 360 : 0)).shadow(color: .cyan.opacity(0.75), radius: 12)
-            Circle()
-                .fill(RadialGradient(colors: [.cyan.opacity(0.27 + Double(voice.microphoneLevel) * 0.32), .blue.opacity(0.12), .black.opacity(0.36)], center: .center, startRadius: 0, endRadius: diameter * 0.49))
-                .frame(width: diameter * 0.92, height: diameter * 0.92)
-            SmithWaveform(level: voice.microphoneLevel, active: voice.connected && !voice.muted)
-                .frame(width: diameter * 0.62, height: diameter * 0.27)
+                .frame(width: diameter, height: diameter)
+            SmithReactiveCore(meter: voice.microphoneMeter, active: voice.connected && !voice.muted, diameter: diameter)
             Text("SMITH").font(.system(size: diameter * 0.105, weight: .ultraLight, design: .rounded))
                 .tracking(diameter * 0.025).foregroundStyle(.white.opacity(0.75)).offset(y: diameter * 0.22)
         }
         .frame(width: diameter * 1.28, height: diameter * 1.28)
-        .onAppear {
-            withAnimation(.linear(duration: 7).repeatForever(autoreverses: false)) { orbit = true }
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
+    }
+}
+
+private struct SmithReactiveCore: View {
+    @ObservedObject var meter: SmithMicrophoneMeter
+    let active: Bool
+    let diameter: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(RadialGradient(colors: [.cyan.opacity(0.27 + Double(meter.level) * 0.24), .blue.opacity(0.12), .black.opacity(0.36)], center: .center, startRadius: 0, endRadius: diameter * 0.49))
+                .frame(width: diameter * 0.92, height: diameter * 0.92)
+            SmithWaveform(level: meter.level, active: active)
+                .frame(width: diameter * 0.62, height: diameter * 0.27)
         }
     }
 }
@@ -368,6 +375,6 @@ struct SmithWaveform: View {
                 let base = max(3, 18 - CGFloat(distance) * 1.7)
                 Capsule().fill(active ? Color.cyan : Color.white.opacity(0.18)).frame(width: 2.2, height: base + CGFloat(level) * CGFloat(42 - distance * 2))
             }
-        }.animation(.linear(duration: 0.08), value: level)
+        }
     }
 }

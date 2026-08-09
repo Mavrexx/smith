@@ -132,9 +132,10 @@ final class SmithAudioController {
         }
         converter = audioConverter
 
-        // 20 ms capture packets keep voice responsive without exceeding the
-        // server's 120-packet/second protection.
-        let tapFrames = AVAudioFrameCount(max(320, sourceFormat.sampleRate * 0.02))
+        // The server analyses 40 ms PCM frames. Matching that frame size avoids
+        // two WebSocket/JSON/MainActor operations per server frame without adding
+        // any server-side voice-detection delay.
+        let tapFrames = AVAudioFrameCount(max(640, sourceFormat.sampleRate * 0.04))
         input.installTap(onBus: 0, bufferSize: tapFrames, format: nil) { [weak self] buffer, _ in
             guard let self, let converter = self.converter else { return }
             let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
