@@ -70,10 +70,20 @@ struct SmithLiveActivityWidget: Widget {
 }
 
 @available(iOSApplicationExtension 18.0, *)
+struct SmithControlIntent: AppIntent {
+    static let title: LocalizedStringResource = "Talk to Smith"
+    static let openAppWhenRun = true
+
+    func perform() async throws -> some IntentResult & OpensIntent {
+        .result(opensIntent: OpenURLIntent(SmithRoute.voice.url))
+    }
+}
+
+@available(iOSApplicationExtension 18.0, *)
 struct SmithControlWidget: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "SmithVoiceControl") {
-            ControlWidgetButton(action: TalkToSmithIntent()) {
+            ControlWidgetButton(action: SmithControlIntent()) {
                 Label("Smith", systemImage: "waveform.circle")
             }
         }
