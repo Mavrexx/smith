@@ -8,6 +8,55 @@ struct SmithSafariDestination: Identifiable {
     let url: URL
 }
 
+final class SmithAudioTransport: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.farhan.smith.audio-transport", qos: .userInitiated)
+    private var socket: URLSessionWebSocketTask?
+    private var pending: [Data] = []
+    private var sending = false
+    private var enabled = false
+
+    func configure(socket: URLSessionWebSocketTask?) {
+        queue.async {
+            self.socket = socket
+            if socket == nil {
+                self.pending.removeAll(keepingCapacity: true)
+                self.sending = false
+            }
+        }
+    }
+
+    func setEnabled(_ value: Bool) {
+        queue.async {
+            self.enabled = value
+            if !value { self.pending.removeAll(keepingCapacity: true) }
+            if value { self.pump() }
+        }
+    }
+
+    func enqueue(_ data: Data) {
+        queue.async {
+            guard self.enabled, self.socket != nil else { return }
+            if self.pending.count >= 8 { self.pending.removeFirst() }
+            self.pending.append(data)
+            self.pump()
+        }
+    }
+
+    private func pump() {
+        guard enabled, !sending, let socket, !pending.isEmpty else { return }
+        sending = true
+        let data = pending.removeFirst()
+        let message = "{\"type\":\"audio\",\"data\":\"\(data.base64EncodedString())\"}"
+        socket.send(.string(message)) { [weak self] _ in
+            guard let self else { return }
+            self.queue.async {
+                self.sending = false
+                self.pump()
+            }
+        }
+    }
+}
+
 @MainActor
 final class SmithMicrophoneMeter: ObservableObject {
     @Published private(set) var level: Float = 0
@@ -45,6 +94,7 @@ final class SmithVoiceSession: ObservableObject {
 
     private let api: SmithAPI
     private let audio = SmithAudioController()
+    private let audioTransport = SmithAudioTransport()
     private let liveActivity = SmithLiveActivityManager()
     private var socket: URLSessionWebSocketTask?
     private var heartbeat: Task<Void, Never>?
@@ -52,7 +102,6 @@ final class SmithVoiceSession: ObservableObject {
     private var shouldRun = false
     private var attempt = 0
     private var captureStarted = false
-    private var totalAudioPacketsSent = 0
 
     init(api: SmithAPI) {
         self.api = api
@@ -87,8 +136,17 @@ final class SmithVoiceSession: ObservableObject {
 
     func setMuted(_ value: Bool) {
         muted = value
+        audioTransport.setEnabled(connected && !value)
+        if value { microphoneMeter.reset() } else { microphoneMeter.offer(0.18) }
         state = muted ? "MUTED" : (connected ? "LISTENING" : "READY")
-        Task { [weak self] in try? await self?.announcePresence() }
+        Task { [weak self] in
+            guard let self else { return }
+            if value || self.connected {
+                try? await self.announcePresence()
+            } else {
+                try? await self.announcePresenceAndRequestPrimary()
+            }
+        }
         liveActivity.update(
             state: state,
             subtitle: muted ? "Microphone transmission stopped" : "Smith is listening"
@@ -164,6 +222,8 @@ final class SmithVoiceSession: ObservableObject {
         try? await send(["type": "end"])
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
+        audioTransport.setEnabled(false)
+        audioTransport.configure(socket: nil)
         captureStarted = false
         microphoneMeter.reset()
         connected = false
@@ -179,6 +239,7 @@ final class SmithVoiceSession: ObservableObject {
             let url = try await api.webSocketURL()
             let task = URLSession.shared.webSocketTask(with: url)
             socket = task
+            audioTransport.configure(socket: task)
             task.resume()
             receive(on: task)
             startHeartbeat()
@@ -225,23 +286,40 @@ final class SmithVoiceSession: ObservableObject {
             )
             attempt = 0
             textModeAvailable = true
+            audioTransport.setEnabled(!muted)
+            microphoneMeter.offer(muted ? 0 : 0.18)
+            if audioPacketsSent == 0 { audioPacketsSent = 1 }
             startCaptureIfNeeded()
             Task { [weak self] in try? await self?.announcePresence() }
         case "secondary_ready":
             connected = false
-            state = "REQUESTING HANDOFF"
-            Task { [weak self] in try? await self?.announcePresenceAndRequestPrimary() }
+            audioTransport.setEnabled(false)
+            state = muted ? "MUTED - TAP MIC TO JOIN" : "REQUESTING HANDOFF"
+            Task { [weak self] in
+                guard let self else { return }
+                if self.muted {
+                    try? await self.announcePresence()
+                } else {
+                    try? await self.announcePresenceAndRequestPrimary()
+                }
+            }
         case "primary_changed":
             if payload["primary"] as? Bool == true {
                 state = "CONNECTING"
             } else {
                 connected = false
+                audioTransport.setEnabled(false)
                 state = "READY FOR HANDOFF"
             }
         case "handoff_failed":
             connected = false
-            state = "HANDOFF BLOCKED"
-            lastError = payload["message"] as? String ?? "Smith voice is active on another device."
+            if muted {
+                state = "MUTED - TAP MIC TO JOIN"
+                lastError = "This iPhone is connected but muted. Tap the microphone once to unmute and retry the handoff."
+            } else {
+                state = "HANDOFF BLOCKED"
+                lastError = payload["message"] as? String ?? "Smith voice is active on another device."
+            }
         case "handoff_incoming":
             state = "HANDOFF INCOMING"
             liveActivity.update(state: "HANDOFF", subtitle: "Smith is jumping to this iPhone")
@@ -287,25 +365,10 @@ final class SmithVoiceSession: ObservableObject {
 
     private func startCaptureIfNeeded() {
         guard !captureStarted else { return }
+        let transport = audioTransport
         do {
-            try audio.startCapture { [weak self] data, level in
-                Task { @MainActor in
-                    guard let self, self.shouldRun else { return }
-                    self.microphoneMeter.offer(level)
-                    guard self.connected, !self.muted else { return }
-                    do {
-                        try await self.send([
-                            "type": "audio",
-                            "data": data.base64EncodedString(),
-                        ])
-                        self.totalAudioPacketsSent += 1
-                        if self.audioPacketsSent == 0 || self.totalAudioPacketsSent % 50 == 0 {
-                            self.audioPacketsSent = self.totalAudioPacketsSent
-                        }
-                    } catch {
-                        self.lastError = "Microphone stream failed: \(error.localizedDescription)"
-                    }
-                }
+            try audio.startCapture { data, _ in
+                transport.enqueue(data)
             }
             captureStarted = true
         } catch {
@@ -527,6 +590,8 @@ final class SmithVoiceSession: ObservableObject {
     private func scheduleReconnect(_ error: Error) async {
         guard shouldRun else { return }
         connected = false
+        audioTransport.setEnabled(false)
+        audioTransport.configure(socket: nil)
         audio.resetPlayback()
         socket?.cancel()
         socket = nil
