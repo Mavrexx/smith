@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           xcodebuild \
             -project Smith.xcodeproj \
-            -scheme Smith \
+            -scheme SmithLite \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \

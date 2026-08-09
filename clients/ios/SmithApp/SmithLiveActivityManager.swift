@@ -3,6 +3,11 @@ import Foundation
 
 @MainActor
 final class SmithLiveActivityManager {
+#if SMITH_LITE
+    func start() {}
+    func update(state: String, subtitle: String) {}
+    func end() {}
+#else
     private var activity: Activity<SmithVoiceActivityAttributes>?
 
     func start() {
@@ -39,4 +44,5 @@ final class SmithLiveActivityManager {
         )
         Task { await activity.end(final, dismissalPolicy: .immediate) }
     }
+#endif
 }
