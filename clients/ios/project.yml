@@ -37,7 +37,9 @@ targets:
     type: application
     platform: iOS
     sources:
-      - SmithApp
+      - path: SmithApp
+        excludes:
+          - Info.plist
       - Shared
     info:
       path: SmithApp/SmithLite-Info.plist
