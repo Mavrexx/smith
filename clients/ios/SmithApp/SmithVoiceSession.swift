@@ -3,6 +3,11 @@ import AVFoundation
 import Foundation
 import UIKit
 
+struct SmithSafariDestination: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 @MainActor
 final class SmithVoiceSession: ObservableObject {
     @Published private(set) var connected = false
@@ -15,6 +20,9 @@ final class SmithVoiceSession: ObservableObject {
     @Published private(set) var microphoneLevel: Float = 0
     @Published private(set) var audioPacketsSent = 0
     @Published private(set) var textModeAvailable = false
+    @Published private(set) var outputVolume = 66
+    @Published var safariDestination: SmithSafariDestination?
+    @Published var requestedPage: String?
 
     private let api: SmithAPI
     private let audio = SmithAudioController()
@@ -31,7 +39,11 @@ final class SmithVoiceSession: ObservableObject {
     }
 
     func start() async {
-        guard !shouldRun else { return }
+        if shouldRun {
+            if !captureStarted { retryMicrophone() }
+            if !connected && socket == nil { await connect() }
+            return
+        }
         let permission = await withCheckedContinuation { continuation in
             AVAudioSession.sharedInstance().requestRecordPermission {
                 continuation.resume(returning: $0)
@@ -50,13 +62,46 @@ final class SmithVoiceSession: ObservableObject {
     }
 
     func toggleMuted() {
-        muted.toggle()
-        state = muted ? "MUTED" : (connected ? "LISTENING" : "IDLE")
+        setMuted(!muted)
+    }
+
+    func setMuted(_ value: Bool) {
+        muted = value
+        state = muted ? "MUTED" : (connected ? "LISTENING" : "READY")
         Task { [weak self] in try? await self?.announcePresence() }
         liveActivity.update(
             state: state,
             subtitle: muted ? "Microphone transmission stopped" : "Smith is listening"
         )
+    }
+
+    func retryMicrophone() {
+        guard shouldRun else {
+            Task { await start() }
+            return
+        }
+        do {
+            try audio.restartCapture()
+            captureStarted = true
+            lastError = nil
+            state = muted ? "MUTED" : (connected ? "LISTENING" : "READY")
+        } catch {
+            captureStarted = false
+            lastError = "Microphone restart failed: \(error.localizedDescription)"
+        }
+    }
+
+    @discardableResult
+    func adjustSmithVolume(by delta: Float) -> Int {
+        outputVolume = audio.adjustOutputGain(by: delta)
+        return outputVolume
+    }
+
+    @discardableResult
+    func setSmithVolume(percent: Int) -> Int {
+        let clamped = min(100, max(0, percent))
+        outputVolume = audio.setOutputGain(Float(clamped) / 100 * 2.5)
+        return outputVolume
     }
 
     func sendText(_ text: String) async {
@@ -321,22 +366,106 @@ final class SmithVoiceSession: ObservableObject {
             if muted { toggleMuted() }
             success = true
             message = "Smith microphone unmuted on this iPhone."
-        case "open_url", "open_youtube":
-            var rawURL = args["url"] as? String
-            if command == "open_youtube", (rawURL ?? "").isEmpty {
-                let query = (args["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if !query.isEmpty {
-                    rawURL = "https://www.youtube.com/results?search_query=" + query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
-                } else {
-                    rawURL = "https://www.youtube.com/"
-                }
+        case "open_safari", "open_url":
+            var rawURL = (args["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let query = (args["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if (rawURL ?? "").isEmpty, !query.isEmpty {
+                rawURL = "https://www.google.com/search?q=" + (query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
             }
-            if let rawURL, let url = URL(string: rawURL), ["http", "https", "youtube"].contains(url.scheme?.lowercased() ?? "") {
-                success = await UIApplication.shared.open(url)
-                message = success ? "Opened on this iPhone." : "The iPhone could not open that URL."
+            if (rawURL ?? "").isEmpty { rawURL = "https://www.apple.com/" }
+            if let rawURL, let url = URL(string: rawURL), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                safariDestination = SmithSafariDestination(url: url)
+                success = true
+                message = "Opened in Smith's Safari browser on this iPhone."
             } else {
-                message = "The requested URL was invalid."
+                message = "The requested Safari URL was invalid."
             }
+        case "open_youtube":
+            var rawURL = args["url"] as? String
+            let query = (args["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if (rawURL ?? "").isEmpty {
+                rawURL = query.isEmpty
+                    ? "https://www.youtube.com/"
+                    : "https://www.youtube.com/results?search_query=" + (query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
+            }
+            if let rawURL, let url = URL(string: rawURL) {
+                success = await UIApplication.shared.open(url)
+                message = success ? "Opened YouTube on this iPhone." : "The iPhone could not open YouTube."
+            }
+        case "compose_sms":
+            let recipient = String(describing: args["recipient"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let body = String(describing: args["body"] ?? "")
+            var components = URLComponents()
+            components.scheme = "sms"
+            components.path = recipient
+            components.queryItems = body.isEmpty ? nil : [URLQueryItem(name: "body", value: body)]
+            if let url = components.url {
+                success = await UIApplication.shared.open(url)
+                message = success ? "Opened a Messages draft. Review it and tap Send." : "Messages is unavailable."
+            }
+        case "compose_email":
+            let recipient = String(describing: args["recipient"] ?? "")
+            let subject = String(describing: args["subject"] ?? "")
+            let body = String(describing: args["body"] ?? "")
+            var gmail = URLComponents(string: "googlegmail:///co")
+            gmail?.queryItems = [
+                URLQueryItem(name: "to", value: recipient),
+                URLQueryItem(name: "subject", value: subject),
+                URLQueryItem(name: "body", value: body),
+            ]
+            var mail = URLComponents()
+            mail.scheme = "mailto"
+            mail.path = recipient
+            mail.queryItems = [
+                URLQueryItem(name: "subject", value: subject),
+                URLQueryItem(name: "body", value: body),
+            ]
+            if let gmailURL = gmail?.url, UIApplication.shared.canOpenURL(gmailURL) {
+                success = await UIApplication.shared.open(gmailURL)
+            } else if let mailURL = mail.url {
+                success = await UIApplication.shared.open(mailURL)
+            }
+            message = success ? "Opened an email draft. Review it and tap Send." : "No mail app is available."
+        case "compose_whatsapp":
+            let recipient = String(describing: args["recipient"] ?? "").filter(\.isNumber)
+            let body = String(describing: args["body"] ?? "")
+            var whatsapp = URLComponents(string: "whatsapp://send")
+            whatsapp?.queryItems = [
+                URLQueryItem(name: "phone", value: recipient.isEmpty ? nil : recipient),
+                URLQueryItem(name: "text", value: body),
+            ]
+            var web = URLComponents(string: recipient.isEmpty ? "https://wa.me/" : "https://wa.me/\(recipient)")
+            web?.queryItems = [URLQueryItem(name: "text", value: body)]
+            if let appURL = whatsapp?.url, UIApplication.shared.canOpenURL(appURL) {
+                success = await UIApplication.shared.open(appURL)
+            } else if let webURL = web?.url {
+                success = await UIApplication.shared.open(webURL)
+            }
+            message = success ? "Opened a WhatsApp draft. Choose or verify the contact, then tap Send." : "WhatsApp is unavailable."
+        case "set_smith_volume":
+            let percent = Int((args["percent"] as? NSNumber)?.doubleValue ?? 70)
+            let actual = setSmithVolume(percent: percent)
+            success = true
+            data = ["smithVolumePercent": actual]
+            message = "Smith voice volume set to \(actual)%."
+        case "smith_volume_up":
+            let actual = adjustSmithVolume(by: 0.25)
+            success = true
+            data = ["smithVolumePercent": actual]
+            message = "Smith voice volume raised to \(actual)%."
+        case "smith_volume_down":
+            let actual = adjustSmithVolume(by: -0.25)
+            success = true
+            data = ["smithVolumePercent": actual]
+            message = "Smith voice volume lowered to \(actual)%."
+        case "open_permissions":
+            requestedPage = "permissions"
+            success = true
+            message = "Opened Smith permissions."
+        case "open_files":
+            requestedPage = "files"
+            success = true
+            message = "Opened Smith Files."
         default:
             break
         }

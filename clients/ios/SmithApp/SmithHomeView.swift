@@ -1,8 +1,10 @@
+import SafariServices
 import SwiftUI
 
 enum SmithPage: String, CaseIterable, Identifiable {
     case ask = "Ask Smith", vision = "Vision", memory = "Memory", tasks = "Tasks"
-    case devices = "Devices", files = "Files", automations = "Automations", health = "Health", settings = "Settings"
+    case devices = "Devices", files = "Files", automations = "Automations", health = "Health"
+    case permissions = "Permissions", settings = "Settings"
     var id: String { rawValue }
     var symbol: String {
         switch self {
@@ -14,6 +16,7 @@ enum SmithPage: String, CaseIterable, Identifiable {
         case .files: "folder"
         case .automations: "bolt"
         case .health: "heart"
+        case .permissions: "hand.raised.fill"
         case .settings: "gearshape"
         }
     }
@@ -21,10 +24,16 @@ enum SmithPage: String, CaseIterable, Identifiable {
 
 struct SmithHomeView: View {
     @ObservedObject var model: SmithModel
+    @ObservedObject private var voice: SmithVoiceSession
     @State private var page: SmithPage = .ask
     @State private var dockOpen = false
     @State private var command = ""
     @FocusState private var commandFocused: Bool
+
+    init(model: SmithModel) {
+        self.model = model
+        _voice = ObservedObject(wrappedValue: model.voice)
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -50,10 +59,24 @@ struct SmithHomeView: View {
             }
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: dockOpen)
+        .onReceive(NotificationCenter.default.publisher(for: .smithLaunchVoice)) { _ in
+            page = .ask
+            dockOpen = false
+            Task { await model.wake() }
+        }
         .onReceive(model.$requestedRoute) { route in
             guard let route else { return }
             page = pageForRoute(route)
             dockOpen = false
+        }
+        .onReceive(voice.$requestedPage) { requested in
+            guard let requested, let destination = SmithPage.allCases.first(where: { $0.rawValue.lowercased() == requested.lowercased() }) else { return }
+            page = destination
+            dockOpen = false
+            voice.requestedPage = nil
+        }
+        .sheet(item: $voice.safariDestination) { destination in
+            SmithSafariView(url: destination.url).ignoresSafeArea()
         }
         .task {
             guard model.isRegistered else { return }
@@ -68,6 +91,7 @@ struct SmithHomeView: View {
         case .tasks, .reminders: return .tasks
         case .devices: return .devices
         case .files: return .files
+        case .permissions: return .permissions
         case .settings: return .settings
         default: return .ask
         }
@@ -84,13 +108,14 @@ struct SmithHomeView: View {
             Spacer()
             Circle().fill(connectionColor).frame(width: 6, height: 6).shadow(color: connectionColor, radius: 4)
             Text(connectionText).font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
-            Button { model.voice.toggleMuted() } label: {
-                Image(systemName: model.voice.muted ? "mic.slash.fill" : "mic.fill")
-                    .font(.system(size: 12)).foregroundStyle(model.voice.muted ? .orange : .cyan)
-                    .frame(width: 34, height: 34).background(.white.opacity(0.055), in: Circle())
+            Button(action: toggleMicrophone) {
+                Image(systemName: voice.muted ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: 12)).foregroundStyle(voice.muted ? .orange : .cyan)
+                    .frame(width: 38, height: 38).background(.white.opacity(0.055), in: Circle())
                     .overlay(Circle().stroke(.cyan.opacity(0.15)))
             }
-            .buttonStyle(.plain).disabled(!model.voice.connected)
+            .buttonStyle(.plain)
+            .contentShape(Circle())
         }
         .padding(.horizontal, 17).padding(.top, 8).padding(.bottom, 10).background(.black.opacity(0.22))
     }
@@ -113,13 +138,8 @@ struct SmithHomeView: View {
         VStack(spacing: 9) {
             Spacer(minLength: 2)
             Text(greeting).font(.system(size: 13, weight: .light)).foregroundStyle(.white.opacity(0.64))
-            Button {
-                Task {
-                    if model.voice.connected { model.voice.toggleMuted() }
-                    else { await model.wake() }
-                }
-            } label: {
-                SmithCoreOrb(voice: model.voice, diameter: min(214, height * 0.285))
+            Button(action: toggleMicrophone) {
+                SmithCoreOrb(voice: voice, diameter: min(214, height * 0.285))
             }
             .buttonStyle(.plain)
             Text(model.voice.state)
@@ -201,20 +221,40 @@ struct SmithHomeView: View {
         Task { await model.voice.sendText(text) }
     }
 
+    private func toggleMicrophone() {
+        Task {
+            if voice.state == "IDLE" || voice.state == "PERMISSION REQUIRED" {
+                await model.wake()
+            } else {
+                voice.toggleMuted()
+            }
+        }
+    }
+
     private var dockHandle: some View {
         HStack {
-            Button {
-                Task {
-                    if model.voice.connected { model.voice.toggleMuted() }
-                    else { await model.wake() }
-                }
-            } label: {
-                Image(systemName: model.voice.muted ? "mic.slash.fill" : "mic.fill")
-                    .foregroundStyle(model.voice.muted ? .orange : .cyan)
+            Button(action: toggleMicrophone) {
+                Image(systemName: voice.muted ? "mic.slash.fill" : "mic.fill")
+                    .foregroundStyle(voice.muted ? .orange : .cyan)
                     .frame(width: 42, height: 42)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(model.voice.muted ? "Unmute Smith" : "Mute Smith")
+
+            Spacer()
+
+            Button {
+                page = .ask
+                commandFocused = false
+                dockOpen = false
+                model.returnToIdle()
+            } label: {
+                Image(systemName: "house.fill")
+                    .foregroundStyle(.cyan)
+                    .frame(width: 42, height: 42)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Return to Smith home")
 
             Spacer()
 
@@ -273,6 +313,19 @@ struct SmithHomeView: View {
         .padding(14).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 23))
         .overlay(RoundedRectangle(cornerRadius: 23).stroke(.cyan.opacity(0.17)))
     }
+}
+
+struct SmithSafariView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let controller = SFSafariViewController(url: url)
+        controller.preferredControlTintColor = .cyan
+        controller.dismissButtonStyle = .close
+        return controller
+    }
+
+    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
 }
 
 struct SmithCoreOrb: View {

@@ -22,7 +22,7 @@ struct SmithLauncherWidget: Widget {
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: SmithLauncherProvider()) { _ in
-            Link(destination: SmithRoute.voiceURL()) {
+            Button(intent: SmithLaunchVoiceIntent()) {
                 VStack(spacing: 4) {
                     Image(systemName: "waveform.circle.fill")
                     Text("Smith").font(.caption2.monospaced())
@@ -70,7 +70,7 @@ struct SmithLiveActivityWidget: Widget {
                     Text(context.state.state).font(.caption2.bold()).foregroundStyle(.green)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Link(destination: SmithRoute.voiceURL()) {
+                    Button(intent: SmithLaunchVoiceIntent()) {
                         Label("Return to Smith", systemImage: "mic.circle.fill")
                             .font(.caption.bold()).foregroundStyle(.cyan)
                     }
@@ -87,21 +87,12 @@ struct SmithLiveActivityWidget: Widget {
     }
 }
 
-@available(iOSApplicationExtension 18.0, *)
-struct SmithControlIntent: AppIntent {
-    static let title: LocalizedStringResource = "Talk to Smith"
-    static let openAppWhenRun = true
-
-    func perform() async throws -> some IntentResult & OpensIntent {
-        .result(opensIntent: OpenURLIntent(SmithRoute.voiceURL()))
-    }
-}
 
 @available(iOSApplicationExtension 18.0, *)
 struct SmithControlWidget: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "SmithVoiceControl") {
-            ControlWidgetButton(action: SmithControlIntent()) {
+            ControlWidgetButton(action: SmithLaunchVoiceIntent()) {
                 Label("Start Smith", systemImage: "mic.circle.fill")
             }
         }

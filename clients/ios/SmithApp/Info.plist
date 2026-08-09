@@ -14,12 +14,28 @@
     <key>CFBundleURLName</key><string>com.farhan.smith</string>
     <key>CFBundleURLSchemes</key><array><string>smith</string></array>
   </dict></array>
-  <key>LSApplicationQueriesSchemes</key><array><string>smith</string></array>
+  <key>LSApplicationQueriesSchemes</key>
+  <array>
+    <string>smith</string>
+    <string>whatsapp</string>
+    <string>googlegmail</string>
+  </array>
   <key>NSSupportsLiveActivities</key><true/>
+  <key>NSSupportsLiveActivitiesFrequentUpdates</key><true/>
   <key>NSCameraUsageDescription</key>
   <string>Smith uses the camera only when you explicitly choose Camera on the Vision page.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>Smith reads only the photo you explicitly select for Vision.</string>
+  <key>NSContactsUsageDescription</key>
+  <string>Smith uses contacts only to prepare a message or email to a person you explicitly name.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Smith uses Calendar only for events you explicitly ask it to read or create.</string>
+  <key>NSRemindersFullAccessUsageDescription</key>
+  <string>Smith uses Reminders only for reminders you explicitly ask it to read or create.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Smith uses your location while the app is open for location-aware requests you make.</string>
+  <key>NSPhotoLibraryAddUsageDescription</key>
+  <string>Smith saves an image only when you explicitly request it.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Smith uses the microphone after you wake the orb, then remains hands-free until you mute or end the active session.</string>
   <key>NSSpeechRecognitionUsageDescription</key>

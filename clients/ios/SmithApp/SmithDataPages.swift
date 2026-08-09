@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SmithSetupPage: View {
     @ObservedObject var model: SmithModel
@@ -32,6 +33,7 @@ struct SmithFeaturePage: View {
             case .files: SmithDataListPage(kind: .files, model: model)
             case .automations: SmithAutomationsPage()
             case .health: SmithHealthPage(model: model)
+            case .permissions: SmithPermissionsPage(model: model)
             case .settings: SmithSettingsPage(model: model)
             case .ask: EmptyView()
             }
@@ -65,6 +67,8 @@ struct SmithDataListPage: View {
     @State private var loading = true
     @State private var error: String?
     @State private var entry = ""
+    @State private var showFileImporter = false
+    @State private var uploadStatus: String?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -84,6 +88,18 @@ struct SmithDataListPage: View {
                         .buttonStyle(.borderedProminent).tint(.cyan).foregroundStyle(.black)
                         .disabled(entry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+            }
+            if kind == .files {
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label("Choose Files for Smith", systemImage: "folder.badge.plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).tint(.cyan).foregroundStyle(.black)
+                Text(uploadStatus ?? "iOS grants access only to files you select. Smith accepts text, JSON, CSV, PDF, JPEG, PNG and WebP up to 5 MB each.")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5))
             }
             if loading {
                 Spacer()
@@ -112,7 +128,36 @@ struct SmithDataListPage: View {
                     }
                 }.refreshable { await load() }
             }
-        }.padding(15).task { await load() }
+        }
+        .padding(15)
+        .task { await load() }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.plainText, .json, .commaSeparatedText, .pdf, .jpeg, .png, .webP],
+            allowsMultipleSelection: true
+        ) { result in
+            Task {
+                switch result {
+                case .success(let urls):
+                    var uploaded = 0
+                    for url in urls.prefix(20) {
+                        do {
+                            try await model.api.uploadFile(from: url)
+                            uploaded += 1
+                        } catch {
+                            uploadStatus = "\(url.lastPathComponent): \(error.localizedDescription)"
+                            break
+                        }
+                    }
+                    if uploaded > 0 {
+                        uploadStatus = "Uploaded \(uploaded) selected file\(uploaded == 1 ? "" : "s") securely to Smith Core."
+                        await load()
+                    }
+                case .failure(let error):
+                    uploadStatus = error.localizedDescription
+                }
+            }
+        }
     }
 
     private var title: String {
@@ -194,6 +239,69 @@ struct SmithAutomationsPage: View {
             }
             Spacer()
         }.padding(16)
+    }
+}
+
+struct SmithPermissionsPage: View {
+    @ObservedObject var model: SmithModel
+    @StateObject private var manager = SmithPermissionManager()
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Permissions").font(.title3.weight(.light))
+                Text("Smith can request its own iOS permissions. Apple does not allow one app to grant itself access to every app or silently approve protected data.")
+                    .font(.caption).foregroundStyle(.white.opacity(0.55))
+
+                ForEach(manager.items) { item in
+                    HStack(spacing: 11) {
+                        Image(systemName: item.symbol)
+                            .foregroundStyle(item.granted ? .green : .cyan)
+                            .frame(width: 28)
+                        Text(item.title).font(.system(size: 13))
+                        Spacer()
+                        Text(item.status.uppercased())
+                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(item.granted ? .green : .orange)
+                    }
+                    .padding(12)
+                    .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 13))
+                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(.cyan.opacity(0.08)))
+                }
+
+                Button {
+                    Task { await manager.requestAllAvailable() }
+                } label: {
+                    Label(manager.requesting ? "Requesting…" : "Request Available Permissions", systemImage: "checkmark.shield.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent).tint(.cyan).foregroundStyle(.black)
+                .disabled(manager.requesting)
+
+                Button {
+                    manager.openSettings()
+                } label: {
+                    Label("Open Smith in iOS Settings", systemImage: "gearshape.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered).tint(.cyan)
+
+                Button {
+                    model.openWorkspace(.files)
+                } label: {
+                    Label("Choose Files", systemImage: "folder.badge.plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered).tint(.cyan)
+
+                Text(manager.message)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .padding(.top, 4)
+            }
+            .padding(16)
+            .id(manager.revision)
+        }
     }
 }
 

@@ -14,6 +14,7 @@ enum SmithRoute: String, CaseIterable {
     case devices
     case protocols
     case settings
+    case permissions
     case maps
     case files
     case music
