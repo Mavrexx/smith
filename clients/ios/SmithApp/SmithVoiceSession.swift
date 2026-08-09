@@ -1,6 +1,7 @@
 import Combine
 import AVFoundation
 import Foundation
+import UIKit
 
 @MainActor
 final class SmithVoiceSession: ObservableObject {
@@ -51,6 +52,7 @@ final class SmithVoiceSession: ObservableObject {
     func toggleMuted() {
         muted.toggle()
         state = muted ? "MUTED" : (connected ? "LISTENING" : "IDLE")
+        Task { [weak self] in try? await self?.announcePresence() }
         liveActivity.update(
             state: state,
             subtitle: muted ? "Microphone transmission stopped" : "Smith is listening"
@@ -115,6 +117,9 @@ final class SmithVoiceSession: ObservableObject {
             task.resume()
             receive(on: task)
             startHeartbeat()
+            Task { [weak self] in
+                try? await self?.announcePresenceAndRequestPrimary()
+            }
         } catch {
             await scheduleReconnect(error)
         }
@@ -156,6 +161,22 @@ final class SmithVoiceSession: ObservableObject {
             attempt = 0
             textModeAvailable = true
             startCaptureIfNeeded()
+            Task { [weak self] in try? await self?.announcePresence() }
+        case "secondary_ready":
+            connected = false
+            state = "REQUESTING HANDOFF"
+            Task { [weak self] in try? await self?.announcePresenceAndRequestPrimary() }
+        case "primary_changed":
+            if payload["primary"] as? Bool == true {
+                state = "CONNECTING"
+            } else {
+                connected = false
+                state = "READY FOR HANDOFF"
+            }
+        case "handoff_failed":
+            connected = false
+            state = "HANDOFF BLOCKED"
+            lastError = payload["message"] as? String ?? "Smith voice is active on another device."
         case "audio":
             if let encoded = payload["data"] as? String,
                let chunk = Data(base64Encoded: encoded) {
@@ -219,7 +240,29 @@ final class SmithVoiceSession: ObservableObject {
         }
     }
 
-    private func send(_ object: [String: String]) async throws {
+    private func announcePresence() async throws {
+        try await send([
+            "type": "device_presence",
+            "foreground": true,
+            "locked": false,
+            "voiceInput": true,
+            "voicePlayback": true,
+            "privacyMode": muted,
+            "microphoneActive": !muted,
+            "cameraAvailable": UIImagePickerController.isSourceTypeAvailable(.camera),
+            "visionAvailable": true,
+            "os": "iOS \(UIDevice.current.systemVersion)",
+            "capabilities": ["voice", "keyboard", "vision", "photos"],
+            "lastInteractionAt": Date().timeIntervalSince1970 * 1000,
+        ])
+    }
+
+    private func announcePresenceAndRequestPrimary() async throws {
+        try await announcePresence()
+        try await send(["type": "request_primary"])
+    }
+
+    private func send(_ object: [String: Any]) async throws {
         guard let socket else { return }
         let data = try JSONSerialization.data(withJSONObject: object)
         try await socket.send(.string(String(decoding: data, as: UTF8.self)))
