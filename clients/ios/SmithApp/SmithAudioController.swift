@@ -30,7 +30,7 @@ final class SmithAudioController {
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
+            options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]
         )
         try session.setPreferredSampleRate(48_000)
         try session.setPreferredIOBufferDuration(0.02)
