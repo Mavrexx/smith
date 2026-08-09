@@ -10,13 +10,13 @@ final class SmithAudioController {
 
     init() {
         engine.attach(player)
-        let output = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
+        let playbackFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
             sampleRate: 24_000,
             channels: 1,
             interleaved: false
-        )!
-        engine.connect(player, to: engine.mainMixerNode, format: output)
+        )
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
         observeAudioChanges()
     }
 
@@ -30,7 +30,7 @@ final class SmithAudioController {
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]
+            options: [.allowBluetooth, .defaultToSpeaker]
         )
         try session.setPreferredSampleRate(48_000)
         try session.setPreferredIOBufferDuration(0.02)
@@ -38,22 +38,29 @@ final class SmithAudioController {
 
         let input = engine.inputNode
         let sourceFormat = input.outputFormat(forBus: 0)
-        let targetFormat = AVAudioFormat(
+        guard sourceFormat.sampleRate.isFinite,
+              sourceFormat.sampleRate > 0,
+              sourceFormat.channelCount > 0 else {
+            throw AudioError.invalidInputFormat
+        }
+        guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
             sampleRate: 16_000,
             channels: 1,
             interleaved: false
-        )!
-        converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+        ), let audioConverter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            throw AudioError.converterUnavailable
+        }
+        converter = audioConverter
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 2_048, format: sourceFormat) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 2_048, format: nil) { [weak self] buffer, _ in
             guard let self, let converter = self.converter else { return }
             let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1
+            let capacity = max(1, AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1)
             guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
             var supplied = false
-            var error: NSError?
-            converter.convert(to: converted, error: &error) { _, status in
+            var conversionError: NSError?
+            converter.convert(to: converted, error: &conversionError) { _, status in
                 if supplied {
                     status.pointee = .noDataNow
                     return nil
@@ -62,34 +69,46 @@ final class SmithAudioController {
                 status.pointee = .haveData
                 return buffer
             }
-            guard error == nil,
+            guard conversionError == nil,
                   converted.frameLength > 0,
                   let samples = converted.int16ChannelData?.pointee else { return }
             onPCM16(Data(bytes: samples, count: Int(converted.frameLength) * MemoryLayout<Int16>.size))
         }
-        try startEngineIfNeeded()
+        do {
+            try startEngineIfNeeded()
+        } catch {
+            input.removeTap(onBus: 0)
+            converter = nil
+            throw error
+        }
     }
 
     func play(pcm16 data: Data) {
-        let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: 24_000,
-            channels: 1,
-            interleaved: false
-        )!
         let frames = AVAudioFrameCount(data.count / MemoryLayout<Int16>.size)
         guard frames > 0,
+              let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: 24_000,
+                channels: 1,
+                interleaved: false
+              ),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
-              let destination = buffer.int16ChannelData?.pointee else { return }
+              let destination = buffer.floatChannelData?.pointee else { return }
+
         buffer.frameLength = frames
-        data.withUnsafeBytes { source in
-            if let baseAddress = source.baseAddress {
-                memcpy(destination, baseAddress, data.count)
+        data.withUnsafeBytes { raw in
+            let samples = raw.bindMemory(to: Int16.self)
+            for index in 0..<min(Int(frames), samples.count) {
+                destination[index] = Float(Int16(littleEndian: samples[index])) / 32_768
             }
         }
-        try? startEngineIfNeeded()
-        if !player.isPlaying { player.play() }
-        player.scheduleBuffer(buffer)
+        do {
+            try startEngineIfNeeded()
+            if !player.isPlaying { player.play() }
+            player.scheduleBuffer(buffer)
+        } catch {
+            resetPlayback()
+        }
     }
 
     func resetPlayback() {
@@ -137,6 +156,20 @@ final class SmithAudioController {
             queue: .main
         ) { [weak self] _ in
             try? self?.startEngineIfNeeded()
+        }
+    }
+
+    private enum AudioError: LocalizedError {
+        case invalidInputFormat
+        case converterUnavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidInputFormat:
+                "The microphone audio route is not ready. Disconnect Bluetooth audio and try again."
+            case .converterUnavailable:
+                "Smith could not prepare the microphone audio converter."
+            }
         }
     }
 }
