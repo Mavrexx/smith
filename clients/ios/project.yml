@@ -40,7 +40,23 @@ targets:
       - SmithApp
       - Shared
     info:
-      path: SmithApp/Info.plist
+      path: SmithApp/SmithLite-Info.plist
+      properties:
+        CFBundleDisplayName: Smith
+        CFBundleURLTypes:
+          - CFBundleURLName: com.farhan.smith
+            CFBundleURLSchemes:
+              - smith
+        LSApplicationQueriesSchemes:
+          - smith
+        NSMicrophoneUsageDescription: Smith uses the microphone only after you tap the orb to start a voice session.
+        NSSpeechRecognitionUsageDescription: Speech is sent securely to your private Smith Core for processing.
+        UIBackgroundModes:
+          - audio
+        UIRequiredDeviceCapabilities:
+          - arm64
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.farhan.smith.lite
