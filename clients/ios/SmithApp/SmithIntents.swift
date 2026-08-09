@@ -7,7 +7,7 @@ struct TalkToSmithIntent: AppIntent {
     static let openAppWhenRun = true
 
     func perform() async throws -> some IntentResult & OpensIntent {
-        .result(opensIntent: OpenURLIntent(SmithRoute.voice.url))
+        .result(opensIntent: OpenURLIntent(SmithRoute.voiceURL()))
     }
 }
 

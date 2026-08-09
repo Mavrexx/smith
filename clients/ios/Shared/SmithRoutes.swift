@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 
 enum SmithRoute: String, CaseIterable {
     case voice
@@ -19,6 +19,12 @@ enum SmithRoute: String, CaseIterable {
     case music
     var url: URL {
         URL(string: "smith://\(rawValue)")!
+    }
+
+    static func voiceURL(action: String = "start") -> URL {
+        var components = URLComponents(string: "smith://voice")!
+        components.queryItems = [URLQueryItem(name: "action", value: action)]
+        return components.url!
     }
 
     static func shareURL(text: String, action: String? = nil) -> URL {

@@ -50,9 +50,26 @@ struct SmithHomeView: View {
             }
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: dockOpen)
+        .onReceive(model.$requestedRoute) { route in
+            guard let route else { return }
+            page = pageForRoute(route)
+            dockOpen = false
+        }
         .task {
             guard model.isRegistered else { return }
             await model.wake()
+        }
+    }
+
+    private func pageForRoute(_ route: SmithRoute) -> SmithPage {
+        switch route {
+        case .voice, .text, .conversations, .share, .clipboard: return .ask
+        case .memory: return .memory
+        case .tasks, .reminders: return .tasks
+        case .devices: return .devices
+        case .files: return .files
+        case .settings: return .settings
+        default: return .ask
         }
     }
 
@@ -185,23 +202,49 @@ struct SmithHomeView: View {
     }
 
     private var dockHandle: some View {
-        Button {
-            commandFocused = false; dockOpen.toggle()
-        } label: {
-            HStack {
-                Image(systemName: model.voice.muted ? "mic.slash" : "mic").foregroundStyle(model.voice.muted ? .orange : .cyan)
-                Spacer()
+        HStack {
+            Button {
+                Task {
+                    if model.voice.connected { model.voice.toggleMuted() }
+                    else { await model.wake() }
+                }
+            } label: {
+                Image(systemName: model.voice.muted ? "mic.slash.fill" : "mic.fill")
+                    .foregroundStyle(model.voice.muted ? .orange : .cyan)
+                    .frame(width: 42, height: 42)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.voice.muted ? "Unmute Smith" : "Mute Smith")
+
+            Spacer()
+
+            Button {
+                commandFocused = false
+                dockOpen.toggle()
+            } label: {
                 ZStack {
                     Circle().fill(.cyan.opacity(0.1)).frame(width: 44, height: 44)
                     Image(systemName: dockOpen ? "chevron.down" : "circle.grid.3x3.fill").foregroundStyle(.cyan)
                 }
-                Spacer()
-                Image(systemName: "xmark").foregroundStyle(.white.opacity(0.46))
             }
-            .font(.system(size: 13)).padding(.horizontal, 17).frame(height: 54)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
-            .overlay(RoundedRectangle(cornerRadius: 22).stroke(.cyan.opacity(0.19)))
-        }.buttonStyle(.plain)
+            .buttonStyle(.plain)
+            .accessibilityLabel(dockOpen ? "Close app dock" : "Open app dock")
+
+            Spacer()
+
+            Button {
+                dockOpen = false
+                Task { await model.voice.stop() }
+            } label: {
+                Image(systemName: "xmark").foregroundStyle(.white.opacity(0.62))
+                    .frame(width: 42, height: 42)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Stop Smith voice")
+        }
+        .font(.system(size: 13)).padding(.horizontal, 8).frame(height: 54)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+        .overlay(RoundedRectangle(cornerRadius: 22).stroke(.cyan.opacity(0.19)))
     }
 
     private var dock: some View {

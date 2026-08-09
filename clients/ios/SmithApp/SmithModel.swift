@@ -18,6 +18,7 @@ final class SmithModel: ObservableObject {
     @Published private(set) var isRegistered = SmithKeychain.get("device-token") != nil
     @Published var sharedText = ""
     @Published var pendingAction: String?
+    @Published private(set) var requestedRoute: SmithRoute?
 
     let api = SmithAPI()
     lazy var voice = SmithVoiceSession(api: api)
@@ -110,10 +111,23 @@ final class SmithModel: ObservableObject {
 
         sharedText = components?.queryItems?.first(where: { $0.name == "text" })?.value ?? ""
         pendingAction = components?.queryItems?.first(where: { $0.name == "action" })?.value
+        requestedRoute = route
         if route == .clipboard { sharedText = UIPasteboard.general.string ?? "" }
         if pendingAction == "task" { openWorkspace(.tasks) }
         else if pendingAction == "remember" { openWorkspace(.memory) }
-        else { openWorkspace(route) }
+        else if route == .voice {
+            environment = .awake
+            workspace = nil
+            Task {
+                if pendingAction == "toggle-mute", voice.connected {
+                    voice.toggleMuted()
+                } else {
+                    await wake()
+                }
+            }
+        } else {
+            openWorkspace(route)
+        }
     }
 }
 

@@ -22,7 +22,7 @@ struct SmithLauncherWidget: Widget {
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: SmithLauncherProvider()) { _ in
-            Link(destination: SmithRoute.voice.url) {
+            Link(destination: SmithRoute.voiceURL()) {
                 VStack(spacing: 4) {
                     Image(systemName: "waveform.circle.fill")
                     Text("Smith").font(.caption2.monospaced())
@@ -40,31 +40,49 @@ struct SmithLauncherWidget: Widget {
 struct SmithLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: SmithVoiceActivityAttributes.self) { context in
-            HStack {
-                Image(systemName: "waveform")
-                VStack(alignment: .leading) {
-                    Text("Smith").font(.headline)
-                    Text(context.state.subtitle).font(.caption)
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(.cyan.opacity(0.16)).frame(width: 42, height: 42)
+                    Image(systemName: "waveform").foregroundStyle(.cyan)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("S M I T H").font(.headline).tracking(2).foregroundStyle(.white)
+                    Text(context.state.subtitle).font(.caption).foregroundStyle(.cyan.opacity(0.86)).lineLimit(1)
                 }
                 Spacer()
-                Link("Open", destination: SmithRoute.voice.url)
+                Link("Open", destination: SmithRoute.voiceURL()).foregroundStyle(.cyan)
             }
             .padding()
-            .activityBackgroundTint(.black)
+            .activityBackgroundTint(Color(red: 0.01, green: 0.03, blue: 0.06))
             .activitySystemActionForegroundColor(.cyan)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) { Image(systemName: "waveform") }
-                DynamicIslandExpandedRegion(.center) { Text(context.state.subtitle) }
-                DynamicIslandExpandedRegion(.trailing) { Text(context.state.state) }
+                DynamicIslandExpandedRegion(.leading) {
+                    Image(systemName: "waveform.circle.fill").font(.title2).foregroundStyle(.cyan)
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    VStack(spacing: 2) {
+                        Text("S M I T H").font(.caption2.bold()).tracking(2).foregroundStyle(.cyan)
+                        Text(context.state.subtitle).font(.caption2).foregroundStyle(.white).lineLimit(1)
+                    }
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    Text(context.state.state).font(.caption2.bold()).foregroundStyle(.green)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    Link(destination: SmithRoute.voiceURL()) {
+                        Label("Return to Smith", systemImage: "mic.circle.fill")
+                            .font(.caption.bold()).foregroundStyle(.cyan)
+                    }
+                }
             } compactLeading: {
-                Image(systemName: "waveform")
+                Image(systemName: "waveform").foregroundStyle(.cyan)
             } compactTrailing: {
-                Text("S")
+                Circle().fill(.green).frame(width: 7, height: 7)
             } minimal: {
-                Image(systemName: "waveform")
+                Image(systemName: "waveform").foregroundStyle(.cyan)
             }
-            .widgetURL(SmithRoute.voice.url)
+            .widgetURL(SmithRoute.voiceURL())
         }
     }
 }
@@ -75,7 +93,7 @@ struct SmithControlIntent: AppIntent {
     static let openAppWhenRun = true
 
     func perform() async throws -> some IntentResult & OpensIntent {
-        .result(opensIntent: OpenURLIntent(SmithRoute.voice.url))
+        .result(opensIntent: OpenURLIntent(SmithRoute.voiceURL()))
     }
 }
 
@@ -84,7 +102,7 @@ struct SmithControlWidget: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "SmithVoiceControl") {
             ControlWidgetButton(action: SmithControlIntent()) {
-                Label("Smith", systemImage: "waveform.circle")
+                Label("Start Smith", systemImage: "mic.circle.fill")
             }
         }
         .displayName("Talk to Smith")

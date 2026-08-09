@@ -177,6 +177,11 @@ final class SmithVoiceSession: ObservableObject {
             connected = false
             state = "HANDOFF BLOCKED"
             lastError = payload["message"] as? String ?? "Smith voice is active on another device."
+        case "handoff_incoming":
+            state = "HANDOFF INCOMING"
+            liveActivity.update(state: "HANDOFF", subtitle: "Smith is jumping to this iPhone")
+        case "device_command":
+            Task { [weak self] in await self?.executeDeviceCommand(payload) }
         case "audio":
             if let encoded = payload["data"] as? String,
                let chunk = Data(base64Encoded: encoded) {
@@ -240,9 +245,28 @@ final class SmithVoiceSession: ObservableObject {
         }
     }
 
+    private var chargingStateName: String {
+        switch UIDevice.current.batteryState {
+        case .charging: return "charging"
+        case .full: return "full"
+        case .unplugged: return "unplugged"
+        default: return "unknown"
+        }
+    }
+
+    private var batteryPercent: Int? {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let level = UIDevice.current.batteryLevel
+        return level >= 0 ? Int((level * 100).rounded()) : nil
+    }
+
     private func announcePresence() async throws {
-        try await send([
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        var presence: [String: Any] = [
             "type": "device_presence",
+            "deviceName": UIDevice.current.name,
+            "deviceModel": UIDevice.current.model,
+            "chargingState": chargingStateName,
             "foreground": true,
             "locked": false,
             "voiceInput": true,
@@ -254,6 +278,75 @@ final class SmithVoiceSession: ObservableObject {
             "os": "iOS \(UIDevice.current.systemVersion)",
             "capabilities": ["voice", "keyboard", "vision", "photos"],
             "lastInteractionAt": Date().timeIntervalSince1970 * 1000,
+        ]
+        if let batteryPercent { presence["batteryPercent"] = batteryPercent }
+        try await send(presence)
+    }
+
+    private func executeDeviceCommand(_ payload: [String: Any]) async {
+        guard let id = payload["id"] as? String,
+              let command = payload["command"] as? String else { return }
+        let args = payload["args"] as? [String: Any] ?? [:]
+        var success = false
+        var message = "Unsupported iPhone command."
+        var data: [String: Any] = [:]
+
+        switch command {
+        case "get_battery":
+            if let batteryPercent {
+                success = true
+                data = ["batteryPercent": batteryPercent, "chargingState": chargingStateName]
+                message = "This iPhone battery is at \(batteryPercent)% and is \(chargingStateName)."
+            } else {
+                message = "iPhone battery information is temporarily unavailable."
+            }
+        case "get_charging_state":
+            success = true
+            data = ["chargingState": chargingStateName]
+            message = "This iPhone is \(chargingStateName)."
+        case "get_device_info":
+            success = true
+            data = [
+                "deviceName": UIDevice.current.name,
+                "deviceModel": UIDevice.current.model,
+                "systemName": UIDevice.current.systemName,
+                "systemVersion": UIDevice.current.systemVersion,
+            ]
+            message = "This client is \(UIDevice.current.name), an \(UIDevice.current.model) running iOS \(UIDevice.current.systemVersion)."
+        case "mute_microphone":
+            if !muted { toggleMuted() }
+            success = true
+            message = "Smith microphone muted on this iPhone."
+        case "unmute_microphone":
+            if muted { toggleMuted() }
+            success = true
+            message = "Smith microphone unmuted on this iPhone."
+        case "open_url", "open_youtube":
+            var rawURL = args["url"] as? String
+            if command == "open_youtube", (rawURL ?? "").isEmpty {
+                let query = (args["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !query.isEmpty {
+                    rawURL = "https://www.youtube.com/results?search_query=" + query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
+                } else {
+                    rawURL = "https://www.youtube.com/"
+                }
+            }
+            if let rawURL, let url = URL(string: rawURL), ["http", "https", "youtube"].contains(url.scheme?.lowercased() ?? "") {
+                success = await UIApplication.shared.open(url)
+                message = success ? "Opened on this iPhone." : "The iPhone could not open that URL."
+            } else {
+                message = "The requested URL was invalid."
+            }
+        default:
+            break
+        }
+
+        try? await send([
+            "type": "device_command_result",
+            "id": id,
+            "success": success,
+            "message": message,
+            "data": data,
         ])
     }
 
