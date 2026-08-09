@@ -25,7 +25,7 @@ final class SmithAudioController {
         if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
     }
 
-    func startCapture(onPCM16: @escaping @Sendable (Data) -> Void) throws {
+    func startCapture(onPCM16: @escaping @Sendable (Data, Float) -> Void) throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
             .playAndRecord,
@@ -72,7 +72,14 @@ final class SmithAudioController {
             guard conversionError == nil,
                   converted.frameLength > 0,
                   let samples = converted.int16ChannelData?.pointee else { return }
-            onPCM16(Data(bytes: samples, count: Int(converted.frameLength) * MemoryLayout<Int16>.size))
+            let count = Int(converted.frameLength)
+            var energy: Double = 0
+            for index in 0..<count {
+                let value = Double(samples[index]) / 32_768.0
+                energy += value * value
+            }
+            let level = Float(min(1, sqrt(energy / Double(max(1, count))) * 12))
+            onPCM16(Data(bytes: samples, count: count * MemoryLayout<Int16>.size), level)
         }
         do {
             try startEngineIfNeeded()

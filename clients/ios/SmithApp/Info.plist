@@ -16,6 +16,10 @@
   </dict></array>
   <key>LSApplicationQueriesSchemes</key><array><string>smith</string></array>
   <key>NSSupportsLiveActivities</key><true/>
+  <key>NSCameraUsageDescription</key>
+  <string>Smith uses the camera only when you explicitly choose Camera on the Vision page.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Smith reads only the photo you explicitly select for Vision.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Smith uses the microphone after you wake the orb, then remains hands-free until you mute or end the active session.</string>
   <key>NSSpeechRecognitionUsageDescription</key>

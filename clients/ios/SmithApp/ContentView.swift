@@ -1,4 +1,4 @@
-﻿import SwiftUI
+import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var model: SmithModel
@@ -8,14 +8,7 @@ struct ContentView: View {
             SmithBlueprintBackground()
                 .ignoresSafeArea()
 
-            switch model.environment {
-            case .idle:
-                SmithIdleEnvironment(model: model)
-            case .awake:
-                SmithCommandCentre(model: model)
-            case .workspace:
-                SmithWorkspaceEnvironment(model: model)
-            }
+            SmithHomeView(model: model)
         }
         .preferredColorScheme(.dark)
         .onReceive(model.voice.$userTranscript) { transcript in

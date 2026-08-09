@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import UIKit
 
 actor SmithAPI {
@@ -101,6 +101,22 @@ actor SmithAPI {
         request.httpBody = try encoder.encode(json)
         let (_, response) = try await URLSession.shared.data(for: request)
         try validate(response)
+    }
+
+    func get<T: Decodable>(path: String, as type: T.Type = T.self) async throws -> T {
+        let token = try await session()
+        var request = try request(path: path, method: "GET")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        return try await send(request)
+    }
+
+    func sendJSON<T: Decodable>(path: String, method: String, json: [String: String]) async throws -> T {
+        let token = try await session()
+        var request = try request(path: path, method: method)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(json)
+        return try await send(request)
     }
 
     func revokeLocalDevice() {

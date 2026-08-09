@@ -1,4 +1,4 @@
-﻿import Combine
+import Combine
 import AVFoundation
 import Foundation
 
@@ -11,6 +11,9 @@ final class SmithVoiceSession: ObservableObject {
     @Published private(set) var assistantTranscript = ""
     @Published private(set) var lastError: String?
     @Published private(set) var muted = false
+    @Published private(set) var microphoneLevel: Float = 0
+    @Published private(set) var audioPacketsSent = 0
+    @Published private(set) var textModeAvailable = false
 
     private let api: SmithAPI
     private let audio = SmithAudioController()
@@ -54,6 +57,37 @@ final class SmithVoiceSession: ObservableObject {
         )
     }
 
+    func sendText(_ text: String) async {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        userTranscript = clean
+        state = "THINKING"
+        do {
+            if !shouldRun { await start() }
+            guard connected else {
+                throw NSError(domain: "Smith", code: 1, userInfo: [NSLocalizedDescriptionKey: "Smith Core is still connecting."])
+            }
+            try await send(["type": "text", "text": clean])
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func sendImage(_ data: Data, mimeType: String, name: String) async {
+        do {
+            if !shouldRun { await start() }
+            guard connected else {
+                throw NSError(domain: "Smith", code: 2, userInfo: [NSLocalizedDescriptionKey: "Connect Smith before sharing an image."])
+            }
+            try await send(["type": "media", "data": data.base64EncodedString(), "mimeType": mimeType, "name": name])
+            state = "THINKING"
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     func stop() async {
         shouldRun = false
         heartbeat?.cancel()
@@ -64,6 +98,7 @@ final class SmithVoiceSession: ObservableObject {
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
         captureStarted = false
+        microphoneLevel = 0
         connected = false
         state = "IDLE"
         audio.stop()
@@ -119,6 +154,7 @@ final class SmithVoiceSession: ObservableObject {
                 subtitle: muted ? "Microphone transmission stopped" : "Smith is listening"
             )
             attempt = 0
+            textModeAvailable = true
             startCaptureIfNeeded()
         case "audio":
             if let encoded = payload["data"] as? String,
@@ -147,6 +183,12 @@ final class SmithVoiceSession: ObservableObject {
             liveActivity.update(state: "RECONNECTING", subtitle: "Restoring the private voice link")
         case "error":
             lastError = payload["message"] as? String ?? "Realtime session error"
+        case "quota_status":
+            textModeAvailable = payload["textMode"] as? Bool ?? false
+            if let message = payload["message"] as? String,
+               payload["reason"] as? String != "ready" {
+                lastError = message
+            }
         default:
             break
         }
@@ -155,13 +197,20 @@ final class SmithVoiceSession: ObservableObject {
     private func startCaptureIfNeeded() {
         guard !captureStarted else { return }
         do {
-            try audio.startCapture { [weak self] data in
+            try audio.startCapture { [weak self] data, level in
                 Task { @MainActor in
-                    guard let self, self.shouldRun, self.connected, !self.muted else { return }
-                    try? await self.send([
-                        "type": "audio",
-                        "data": data.base64EncodedString(),
-                    ])
+                    guard let self, self.shouldRun else { return }
+                    self.microphoneLevel = level
+                    guard self.connected, !self.muted else { return }
+                    do {
+                        try await self.send([
+                            "type": "audio",
+                            "data": data.base64EncodedString(),
+                        ])
+                        self.audioPacketsSent += 1
+                    } catch {
+                        self.lastError = "Microphone stream failed: \(error.localizedDescription)"
+                    }
                 }
             }
             captureStarted = true
@@ -194,7 +243,7 @@ final class SmithVoiceSession: ObservableObject {
         socket?.cancel()
         socket = nil
         heartbeat?.cancel()
-        lastError = "Connection interrupted; reconnecting automatically."
+        lastError = "Connection interrupted: \(error.localizedDescription). Reconnecting automatically."
         attempt += 1
         state = "RECONNECTING"
         let delay = min(30.0, pow(2.0, Double(min(attempt, 5))))
