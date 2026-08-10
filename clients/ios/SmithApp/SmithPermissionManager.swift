@@ -40,7 +40,7 @@ final class SmithPermissionManager: NSObject, ObservableObject, CLLocationManage
             .init(id: "reminders", title: "Reminders", status: remindersStatus, symbol: "checklist"),
             .init(id: "location", title: "Location", status: locationStatus, symbol: "location.fill"),
             .init(id: "notifications", title: "Notifications", status: "Check Settings", symbol: "bell.fill"),
-            .init(id: "files", title: "Files", status: "Choose in Files page", symbol: "folder.fill"),
+            .init(id: "files", title: "Files / Google Drive", status: "OAuth required", symbol: "folder.fill"),
         ]
     }
 
@@ -51,7 +51,7 @@ final class SmithPermissionManager: NSObject, ObservableObject, CLLocationManage
     func requestAllAvailable() async {
         guard !requesting else { return }
         requesting = true
-        message = "Requesting available Smith permissions…"
+        message = "Requesting available Smith permissions..."
 
         _ = await withCheckedContinuation { continuation in
             AVAudioSession.sharedInstance().requestRecordPermission { continuation.resume(returning: $0) }

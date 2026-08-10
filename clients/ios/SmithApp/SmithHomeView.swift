@@ -1,4 +1,3 @@
-import SafariServices
 import SwiftUI
 
 enum SmithPage: String, CaseIterable, Identifiable {
@@ -24,16 +23,10 @@ enum SmithPage: String, CaseIterable, Identifiable {
 
 struct SmithHomeView: View {
     @ObservedObject var model: SmithModel
-    @ObservedObject private var voice: SmithVoiceSession
     @State private var page: SmithPage = .ask
     @State private var dockOpen = false
     @State private var command = ""
     @FocusState private var commandFocused: Bool
-
-    init(model: SmithModel) {
-        self.model = model
-        _voice = ObservedObject(wrappedValue: model.voice)
-    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -59,24 +52,10 @@ struct SmithHomeView: View {
             }
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: dockOpen)
-        .onReceive(NotificationCenter.default.publisher(for: .smithLaunchVoice)) { _ in
-            page = .ask
-            dockOpen = false
-            Task { await model.wake() }
-        }
         .onReceive(model.$requestedRoute) { route in
             guard let route else { return }
             page = pageForRoute(route)
             dockOpen = false
-        }
-        .onReceive(voice.$requestedPage) { requested in
-            guard let requested, let destination = SmithPage.allCases.first(where: { $0.rawValue.lowercased() == requested.lowercased() }) else { return }
-            page = destination
-            dockOpen = false
-            voice.requestedPage = nil
-        }
-        .sheet(item: $voice.safariDestination) { destination in
-            SmithSafariView(url: destination.url).ignoresSafeArea()
         }
         .task {
             guard model.isRegistered else { return }
@@ -109,13 +88,12 @@ struct SmithHomeView: View {
             Circle().fill(connectionColor).frame(width: 6, height: 6).shadow(color: connectionColor, radius: 4)
             Text(connectionText).font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
             Button(action: toggleMicrophone) {
-                Image(systemName: voice.muted ? "mic.slash.fill" : "mic.fill")
-                    .font(.system(size: 12)).foregroundStyle(voice.muted ? .orange : .cyan)
-                    .frame(width: 38, height: 38).background(.white.opacity(0.055), in: Circle())
+                Image(systemName: model.voice.muted ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: 12)).foregroundStyle(model.voice.muted ? .orange : .cyan)
+                    .frame(width: 44, height: 44).background(.white.opacity(0.055), in: Circle())
                     .overlay(Circle().stroke(.cyan.opacity(0.15)))
             }
-            .buttonStyle(.plain)
-            .contentShape(Circle())
+            .buttonStyle(.plain).contentShape(Circle())
         }
         .padding(.horizontal, 17).padding(.top, 8).padding(.bottom, 10).background(.black.opacity(0.22))
     }
@@ -138,8 +116,13 @@ struct SmithHomeView: View {
         VStack(spacing: 9) {
             Spacer(minLength: 2)
             Text(greeting).font(.system(size: 13, weight: .light)).foregroundStyle(.white.opacity(0.64))
-            Button(action: toggleMicrophone) {
-                SmithCoreOrb(voice: voice, diameter: min(214, height * 0.285))
+            Button {
+                Task {
+                    if model.voice.connected { model.voice.toggleMuted() }
+                    else { await model.wake() }
+                }
+            } label: {
+                SmithCoreOrb(voice: model.voice, diameter: min(214, height * 0.285))
             }
             .buttonStyle(.plain)
             Text(model.voice.state)
@@ -223,10 +206,10 @@ struct SmithHomeView: View {
 
     private func toggleMicrophone() {
         Task {
-            if voice.state == "IDLE" || voice.state == "PERMISSION REQUIRED" {
+            if model.voice.state == "IDLE" || model.voice.state == "PERMISSION REQUIRED" {
                 await model.wake()
             } else {
-                voice.toggleMuted()
+                model.voice.toggleMuted()
             }
         }
     }
@@ -234,8 +217,8 @@ struct SmithHomeView: View {
     private var dockHandle: some View {
         HStack {
             Button(action: toggleMicrophone) {
-                Image(systemName: voice.muted ? "mic.slash.fill" : "mic.fill")
-                    .foregroundStyle(voice.muted ? .orange : .cyan)
+                Image(systemName: model.voice.muted ? "mic.slash.fill" : "mic.fill")
+                    .foregroundStyle(model.voice.muted ? .orange : .cyan)
                     .frame(width: 42, height: 42)
             }
             .buttonStyle(.plain)
@@ -247,14 +230,12 @@ struct SmithHomeView: View {
                 page = .ask
                 commandFocused = false
                 dockOpen = false
-                model.returnToIdle()
             } label: {
-                Image(systemName: "house.fill")
-                    .foregroundStyle(.cyan)
+                Image(systemName: "house.fill").foregroundStyle(.cyan)
                     .frame(width: 42, height: 42)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Return to Smith home")
+            .accessibilityLabel("Smith Home")
 
             Spacer()
 
@@ -315,52 +296,32 @@ struct SmithHomeView: View {
     }
 }
 
-struct SmithSafariView: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context: Context) -> SFSafariViewController {
-        let controller = SFSafariViewController(url: url)
-        controller.preferredControlTintColor = .cyan
-        controller.dismissButtonStyle = .close
-        return controller
-    }
-
-    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
-}
-
 struct SmithCoreOrb: View {
     @ObservedObject var voice: SmithVoiceSession
     let diameter: CGFloat
-
+    @State private var orbit = false
+    @State private var pulse = false
     var body: some View {
         ZStack {
             ForEach(0..<3, id: \.self) { index in
                 Circle().stroke(.cyan.opacity(0.08 - Double(index) * 0.015), lineWidth: 1)
-                    .frame(width: diameter * (1.05 + CGFloat(index) * 0.10))
+                    .frame(width: diameter * (1.05 + CGFloat(index) * 0.10)).scaleEffect(pulse ? 1.025 : 0.975)
             }
             Circle()
                 .stroke(AngularGradient(colors: [.clear, .cyan, .white.opacity(0.8), .blue, .clear], center: .center), lineWidth: max(2, diameter * 0.017))
-                .frame(width: diameter, height: diameter)
-            SmithReactiveCore(meter: voice.microphoneMeter, active: voice.connected && !voice.muted, diameter: diameter)
+                .frame(width: diameter, height: diameter).rotationEffect(.degrees(orbit ? 360 : 0)).shadow(color: .cyan.opacity(0.75), radius: 12)
+            Circle()
+                .fill(RadialGradient(colors: [.cyan.opacity(0.27 + Double(voice.microphoneLevel) * 0.32), .blue.opacity(0.12), .black.opacity(0.36)], center: .center, startRadius: 0, endRadius: diameter * 0.49))
+                .frame(width: diameter * 0.92, height: diameter * 0.92)
+            SmithWaveform(level: voice.microphoneLevel, active: voice.connected && !voice.muted)
+                .frame(width: diameter * 0.62, height: diameter * 0.27)
             Text("SMITH").font(.system(size: diameter * 0.105, weight: .ultraLight, design: .rounded))
                 .tracking(diameter * 0.025).foregroundStyle(.white.opacity(0.75)).offset(y: diameter * 0.22)
         }
         .frame(width: diameter * 1.28, height: diameter * 1.28)
-    }
-}
-
-private struct SmithReactiveCore: View {
-    @ObservedObject var meter: SmithMicrophoneMeter
-    let active: Bool
-    let diameter: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(RadialGradient(colors: [.cyan.opacity(0.27 + Double(meter.level) * 0.24), .blue.opacity(0.12), .black.opacity(0.36)], center: .center, startRadius: 0, endRadius: diameter * 0.49))
-                .frame(width: diameter * 0.92, height: diameter * 0.92)
-            SmithWaveform(level: meter.level, active: active)
-                .frame(width: diameter * 0.62, height: diameter * 0.27)
+        .onAppear {
+            withAnimation(.linear(duration: 7).repeatForever(autoreverses: false)) { orbit = true }
+            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { pulse = true }
         }
     }
 }
@@ -375,6 +336,6 @@ struct SmithWaveform: View {
                 let base = max(3, 18 - CGFloat(distance) * 1.7)
                 Capsule().fill(active ? Color.cyan : Color.white.opacity(0.18)).frame(width: 2.2, height: base + CGFloat(level) * CGFloat(42 - distance * 2))
             }
-        }
+        }.animation(.linear(duration: 0.08), value: level)
     }
 }

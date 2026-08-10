@@ -1,6 +1,5 @@
 import Foundation
 import UIKit
-import UniformTypeIdentifiers
 
 actor SmithAPI {
     struct RegistrationResponse: Decodable {
@@ -120,44 +119,6 @@ actor SmithAPI {
         return try await send(request)
     }
 
-    func uploadFile(from url: URL) async throws {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
-        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-        guard values.isRegularFile == true else {
-            throw APIError.unsupportedFile
-        }
-        guard let size = values.fileSize, size <= 5 * 1024 * 1024 else {
-            throw APIError.fileTooLarge
-        }
-
-        let data = try Data(contentsOf: url, options: .mappedIfSafe)
-        let token = try await session()
-        let boundary = "SmithBoundary-\(UUID().uuidString)"
-        let safeName = url.lastPathComponent
-            .replacingOccurrences(of: "\"", with: "")
-            .replacingOccurrences(of: "\r", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-        let mediaType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
-            ?? "application/octet-stream"
-
-        var body = Data()
-        body.append(Data("--\(boundary)\r\n".utf8))
-        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(safeName)\"\r\n".utf8))
-        body.append(Data("Content-Type: \(mediaType)\r\n\r\n".utf8))
-        body.append(data)
-        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
-
-        var request = try request(path: "/api/smith/files", method: "POST")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = body
-        request.timeoutInterval = 60
-        let (_, response) = try await URLSession.shared.data(for: request)
-        try validate(response)
-    }
-
     func revokeLocalDevice() {
         SmithKeychain.remove("device-token")
         sessionToken = nil
@@ -200,8 +161,6 @@ actor SmithAPI {
         case deviceNotRegistered
         case invalidResponse
         case http(Int)
-        case fileTooLarge
-        case unsupportedFile
 
         var errorDescription: String? {
             switch self {
@@ -210,8 +169,6 @@ actor SmithAPI {
             case .deviceNotRegistered: "Register this device with the server access code."
             case .invalidResponse: "Smith returned an invalid response."
             case .http(let status): "Smith returned HTTP \(status)."
-            case .fileTooLarge: "Smith files must be 5 MB or smaller."
-            case .unsupportedFile: "Choose a regular text, PDF, JSON, CSV, JPEG, PNG or WebP file."
             }
         }
     }

@@ -220,8 +220,9 @@ private struct SmithWorkspaceEnvironment: View {
         case .some(.settings):
             SmithSettingsWorkspace(model: model)
         case .some(.search), .some(.apps), .some(.devices), .some(.protocols),
-             .some(.maps), .some(.files), .some(.music), .some(.permissions),
-             .some(.text), .some(.reminders), .some(.clipboard), .some(.share):
+             .some(.maps), .some(.files), .some(.music),
+             .some(.text), .some(.reminders), .some(.clipboard), .some(.share),
+             .some(.permissions):
             SmithGenericWorkspace(model: model, route: model.workspace ?? .search)
         case .none:
             EmptyView()

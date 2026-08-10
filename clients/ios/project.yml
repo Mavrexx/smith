@@ -19,7 +19,8 @@ targets:
           - Info.plist
           - SmithLite-Info.plist
       - Shared
-
+    entitlements:
+      path: SmithApp/Smith.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.farhan.smith
@@ -76,7 +77,8 @@ targets:
         excludes:
           - Info.plist
       - Shared
-
+    entitlements:
+      path: SmithWidgets/SmithWidgets.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.farhan.smith.widgets
@@ -91,7 +93,8 @@ targets:
         excludes:
           - Info.plist
       - Shared/SmithRoutes.swift
-
+    entitlements:
+      path: SmithShare/SmithShare.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.farhan.smith.share

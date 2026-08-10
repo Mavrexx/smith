@@ -1,5 +1,4 @@
 import AVFoundation
-import MediaPlayer
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -145,26 +144,8 @@ struct SmithHealthPage: View {
     }
 }
 
-struct SmithSystemVolumeView: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let view = MPVolumeView(frame: .zero)
-        view.showsRouteButton = true
-        view.showsVolumeSlider = true
-        return view
-    }
-
-    func updateUIView(_ view: MPVolumeView, context: Context) {}
-}
-
 struct SmithSettingsPage: View {
     @ObservedObject var model: SmithModel
-    @ObservedObject private var voice: SmithVoiceSession
-
-    init(model: SmithModel) {
-        self.model = model
-        _voice = ObservedObject(wrappedValue: model.voice)
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 15) {
@@ -178,49 +159,11 @@ struct SmithSettingsPage: View {
                 Text(model.status).font(.caption.monospaced()).foregroundStyle(.white.opacity(0.55))
                 Divider().overlay(.cyan.opacity(0.15))
                 Text("Voice controls").font(.headline)
-                Button(voice.muted ? "Unmute Smith" : "Mute Smith") {
-                    if voice.state == "IDLE" {
-                        Task { await model.wake() }
-                    } else {
-                        voice.toggleMuted()
-                    }
-                }
-                .buttonStyle(.bordered).tint(.cyan)
-
-                Button("Retry microphone") { voice.retryMicrophone() }
+                Button(model.voice.muted ? "Unmute Smith" : "Mute Smith") { model.voice.toggleMuted() }
                     .buttonStyle(.bordered).tint(.cyan)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Smith voice boost")
-                        Spacer()
-                        Text("\(voice.outputVolume)%").font(.caption.monospaced()).foregroundStyle(.cyan)
-                    }
-                    Slider(
-                        value: Binding(
-                            get: { Double(voice.outputVolume) },
-                            set: { _ = voice.setSmithVolume(percent: Int($0)) }
-                        ),
-                        in: 0...100,
-                        step: 5
-                    ).tint(.cyan)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("iPhone system volume").font(.subheadline)
-                    SmithSystemVolumeView()
-                        .frame(height: 34)
-                    Text("Apple requires system volume to be changed through this visible control.")
-                        .font(.caption2).foregroundStyle(.white.opacity(0.45))
-                }
-
                 Button("Reconnect realtime voice") {
-                    Task { await voice.stop(); await model.wake() }
+                    Task { await model.voice.stop(); await model.wake() }
                 }.buttonStyle(.bordered).tint(.cyan)
-
-                Button("Open Permissions") { model.openWorkspace(.permissions) }
-                    .buttonStyle(.bordered).tint(.cyan)
-
                 Text("Server: \(model.serverAddress)")
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.white.opacity(0.38)).textSelection(.enabled)
             }.padding(16)
