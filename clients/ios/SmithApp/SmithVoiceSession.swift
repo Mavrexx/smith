@@ -3,6 +3,11 @@ import AVFoundation
 import Foundation
 import UIKit
 
+struct SmithSafariDestination: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 @MainActor
 final class SmithVoiceSession: ObservableObject {
     @Published private(set) var connected = false
@@ -15,6 +20,9 @@ final class SmithVoiceSession: ObservableObject {
     @Published private(set) var microphoneLevel: Float = 0
     @Published private(set) var audioPacketsSent = 0
     @Published private(set) var textModeAvailable = false
+    @Published private(set) var outputVolume = 62
+    @Published var safariDestination: SmithSafariDestination?
+    @Published var requestedPage: String?
 
     private let api: SmithAPI
     private let audio = SmithAudioController()
@@ -51,12 +59,27 @@ final class SmithVoiceSession: ObservableObject {
 
     func toggleMuted() {
         muted.toggle()
+        if muted { microphoneLevel = 0 }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
         state = muted ? "MUTED" : (connected ? "LISTENING" : "IDLE")
         Task { [weak self] in try? await self?.announcePresence() }
         liveActivity.update(
             state: state,
             subtitle: muted ? "Microphone transmission stopped" : "Smith is listening"
         )
+    }
+
+    @discardableResult
+    func adjustSmithVolume(by delta: Float) -> Int {
+        outputVolume = audio.adjustOutputGain(by: delta)
+        return outputVolume
+    }
+
+    @discardableResult
+    func setSmithVolume(percent: Int) -> Int {
+        let clamped = min(100, max(0, percent))
+        outputVolume = audio.setOutputGain(Float(clamped) / 100 * 2.5)
+        return outputVolume
     }
 
     func sendText(_ text: String) async {
@@ -226,8 +249,12 @@ final class SmithVoiceSession: ObservableObject {
             try audio.startCapture { [weak self] data, level in
                 Task { @MainActor in
                     guard let self, self.shouldRun else { return }
+                    guard !self.muted else {
+                        if self.microphoneLevel != 0 { self.microphoneLevel = 0 }
+                        return
+                    }
                     self.microphoneLevel = level
-                    guard self.connected, !self.muted else { return }
+                    guard self.connected else { return }
                     do {
                         try await self.send([
                             "type": "audio",
@@ -276,7 +303,7 @@ final class SmithVoiceSession: ObservableObject {
             "cameraAvailable": UIImagePickerController.isSourceTypeAvailable(.camera),
             "visionAvailable": true,
             "os": "iOS \(UIDevice.current.systemVersion)",
-            "capabilities": ["voice", "keyboard", "vision", "photos"],
+            "capabilities": ["voice", "keyboard", "vision", "photos", "apps", "shortcuts"],
             "lastInteractionAt": Date().timeIntervalSince1970 * 1000,
         ]
         if let batteryPercent { presence["batteryPercent"] = batteryPercent }
@@ -321,6 +348,103 @@ final class SmithVoiceSession: ObservableObject {
             if muted { toggleMuted() }
             success = true
             message = "Smith microphone unmuted on this iPhone."
+        case "open_app":
+            let app = String(describing: args["app"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = await openKnownApp(named: app)
+            success = result.success
+            message = result.message
+        case "open_shortcuts":
+            if let url = URL(string: "shortcuts://") {
+                success = await UIApplication.shared.open(url)
+                message = success ? "Opened Apple Shortcuts." : "Apple Shortcuts could not be opened."
+            }
+        case "run_shortcut":
+            let name = String(describing: args["name"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let input = String(describing: args["input"] ?? "")
+            var components = URLComponents(string: "shortcuts://run-shortcut")
+            var query = [URLQueryItem(name: "name", value: name)]
+            if !input.isEmpty {
+                query.append(URLQueryItem(name: "input", value: "text"))
+                query.append(URLQueryItem(name: "text", value: input))
+            }
+            components?.queryItems = query
+            if !name.isEmpty, let url = components?.url {
+                success = await UIApplication.shared.open(url)
+                message = success
+                    ? "Started the \(name) shortcut."
+                    : "That shortcut could not be opened. Check its exact name in Apple Shortcuts."
+            } else {
+                message = "Say the exact shortcut name you want Smith to run."
+            }
+        case "open_safari":
+            var rawURL = (args["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let query = (args["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if (rawURL ?? "").isEmpty, !query.isEmpty {
+                rawURL = "https://www.google.com/search?q=" + (query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
+            }
+            if (rawURL ?? "").isEmpty { rawURL = "https://www.apple.com/" }
+            if let rawURL, let url = URL(string: rawURL), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                safariDestination = SmithSafariDestination(url: url)
+                success = true
+                message = "Opened in Smith's Safari browser on this iPhone."
+            } else {
+                message = "The requested Safari URL was invalid."
+            }
+        case "compose_sms":
+            let recipient = String(describing: args["recipient"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let body = String(describing: args["body"] ?? "")
+            var components = URLComponents()
+            components.scheme = "sms"
+            components.path = recipient
+            components.queryItems = body.isEmpty ? nil : [URLQueryItem(name: "body", value: body)]
+            if let url = components.url { success = await UIApplication.shared.open(url) }
+            message = success ? "Opened a Messages draft. Review it and tap Send." : "Messages is unavailable."
+        case "compose_email":
+            let recipient = String(describing: args["recipient"] ?? "")
+            let subject = String(describing: args["subject"] ?? "")
+            let body = String(describing: args["body"] ?? "")
+            var mail = URLComponents()
+            mail.scheme = "mailto"
+            mail.path = recipient
+            mail.queryItems = [URLQueryItem(name: "subject", value: subject), URLQueryItem(name: "body", value: body)]
+            if let url = mail.url { success = await UIApplication.shared.open(url) }
+            message = success ? "Opened an email draft. Review it and tap Send." : "No mail app is available."
+        case "compose_whatsapp":
+            let recipient = String(describing: args["recipient"] ?? "").filter(\.isNumber)
+            let body = String(describing: args["body"] ?? "")
+            var whatsapp = URLComponents(string: "whatsapp://send")
+            whatsapp?.queryItems = [
+                URLQueryItem(name: "phone", value: recipient.isEmpty ? nil : recipient),
+                URLQueryItem(name: "text", value: body),
+            ]
+            if let url = whatsapp?.url { success = await UIApplication.shared.open(url) }
+            message = success ? "Opened a WhatsApp draft. Verify the contact, then tap Send." : "WhatsApp is unavailable."
+        case "set_smith_volume":
+            let percent = Int((args["percent"] as? NSNumber)?.doubleValue ?? 62)
+            let actual = setSmithVolume(percent: percent)
+            success = true
+            data = ["smithVolumePercent": actual]
+            message = "Smith voice volume set to \(actual)%."
+        case "smith_volume_up":
+            let actual = adjustSmithVolume(by: 0.25)
+            success = true
+            data = ["smithVolumePercent": actual]
+            message = "Smith voice volume raised to \(actual)%."
+        case "smith_volume_down":
+            let actual = adjustSmithVolume(by: -0.25)
+            success = true
+            data = ["smithVolumePercent": actual]
+            message = "Smith voice volume lowered to \(actual)%."
+        case "open_permissions":
+            requestedPage = "permissions"
+            success = true
+            message = "Opened Smith permissions."
+        case "open_files":
+            requestedPage = "files"
+            success = true
+            message = "Opened Smith Files."
         case "open_url", "open_youtube":
             var rawURL = args["url"] as? String
             if command == "open_youtube", (rawURL ?? "").isEmpty {
@@ -348,6 +472,47 @@ final class SmithVoiceSession: ObservableObject {
             "message": message,
             "data": data,
         ])
+    }
+
+    private func openKnownApp(named spokenName: String) async -> (success: Bool, message: String) {
+        let key = spokenName.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]", with: "", options: .regularExpression)
+        let aliases: [String: [String]] = [
+            "youtube": ["youtube://"], "yt": ["youtube://"],
+            "gmail": ["googlegmail://"], "mail": ["mailto:"],
+            "safari": ["https://www.google.com/"], "chrome": ["googlechrome://"],
+            "firefox": ["firefox://"], "brave": ["brave://"],
+            "spotify": ["spotify://"], "applemusic": ["music://"], "music": ["music://"],
+            "whatsapp": ["whatsapp://"], "messages": ["sms:"], "imessage": ["sms:"],
+            "phone": ["tel:"], "facetime": ["facetime:"],
+            "instagram": ["instagram://"], "facebook": ["fb://"],
+            "messenger": ["fb-messenger://"], "tiktok": ["snssdk1233://"],
+            "snapchat": ["snapchat://"], "twitter": ["twitter://"], "x": ["twitter://"],
+            "discord": ["discord://"], "reddit": ["reddit://"], "telegram": ["tg://"],
+            "signal": ["sgnl://"], "slack": ["slack://"], "teams": ["msteams://"],
+            "zoom": ["zoomus://"], "notion": ["notion://"],
+            "googlemaps": ["comgooglemaps://"], "maps": ["maps://"],
+            "googledrive": ["googledrive://"], "drive": ["googledrive://"],
+            "onedrive": ["ms-onedrive://"], "dropbox": ["dbapi-1://"],
+            "shortcuts": ["shortcuts://"], "appstore": ["itms-apps://"],
+            "podcasts": ["pcast://"], "calendar": ["calshow://"],
+        ]
+        guard let candidates = aliases[key] else {
+            return (
+                false,
+                "iOS does not expose every installed app. Add a named Apple Shortcut for \(spokenName), then ask Smith to run that exact shortcut."
+            )
+        }
+        for raw in candidates {
+            guard let url = URL(string: raw) else { continue }
+            if await UIApplication.shared.open(url) {
+                return (true, "Opened \(spokenName) on this iPhone.")
+            }
+        }
+        return (
+            false,
+            "\(spokenName) is not installed or does not expose an iPhone URL scheme. A named Apple Shortcut can open it instead."
+        )
     }
 
     private func announcePresenceAndRequestPrimary() async throws {

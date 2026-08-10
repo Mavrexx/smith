@@ -246,6 +246,18 @@ struct SmithPermissionsPage: View {
                     .font(.caption).foregroundStyle(.orange.opacity(0.82))
                     .padding(11).background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
 
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("APPS & SHORTCUTS").font(.caption2.monospaced()).tracking(1.5).foregroundStyle(.cyan)
+                    Text("Smith can open apps that publish an iPhone URL scheme and can run any named Apple Shortcut. iOS does not provide an installed-app list or an all-apps permission.")
+                        .font(.caption).foregroundStyle(.white.opacity(0.58))
+                    Link(destination: URL(string: "shortcuts://")!) {
+                        Label("Open Apple Shortcuts", systemImage: "square.stack.3d.up.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered).tint(.cyan)
+                }
+                .padding(11).background(.cyan.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+
                 Text(manager.message).font(.caption).foregroundStyle(.white.opacity(0.5))
             }.padding(16)
         }

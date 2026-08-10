@@ -1,3 +1,4 @@
+import SafariServices
 import SwiftUI
 
 enum SmithPage: String, CaseIterable, Identifiable {
@@ -26,6 +27,8 @@ struct SmithHomeView: View {
     @State private var page: SmithPage = .ask
     @State private var dockOpen = false
     @State private var command = ""
+    @State private var displayedMuted = false
+    @State private var safariDestination: SmithSafariDestination?
     @FocusState private var commandFocused: Bool
 
     var body: some View {
@@ -56,6 +59,22 @@ struct SmithHomeView: View {
             guard let route else { return }
             page = pageForRoute(route)
             dockOpen = false
+        }
+        .onReceive(model.voice.$muted) { displayedMuted = $0 }
+        .onReceive(model.voice.$requestedPage) { requested in
+            guard let requested,
+                  let destination = SmithPage.allCases.first(where: {
+                      $0.rawValue.lowercased() == requested.lowercased()
+                  }) else { return }
+            page = destination
+            dockOpen = false
+            model.voice.requestedPage = nil
+        }
+        .onReceive(model.voice.$safariDestination) { safariDestination = $0 }
+        .sheet(item: $safariDestination, onDismiss: {
+            model.voice.safariDestination = nil
+        }) { destination in
+            SmithSafariView(url: destination.url).ignoresSafeArea()
         }
         .task {
             guard model.isRegistered else { return }
@@ -88,26 +107,28 @@ struct SmithHomeView: View {
             Circle().fill(connectionColor).frame(width: 6, height: 6).shadow(color: connectionColor, radius: 4)
             Text(connectionText).font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
             Button(action: toggleMicrophone) {
-                Image(systemName: model.voice.muted ? "mic.slash.fill" : "mic.fill")
-                    .font(.system(size: 12)).foregroundStyle(model.voice.muted ? .orange : .cyan)
+                Image(systemName: displayedMuted ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: 12)).foregroundStyle(displayedMuted ? .orange : .cyan)
                     .frame(width: 44, height: 44).background(.white.opacity(0.055), in: Circle())
                     .overlay(Circle().stroke(.cyan.opacity(0.15)))
             }
             .buttonStyle(.plain).contentShape(Circle())
+            .accessibilityLabel(displayedMuted ? "Unmute Smith" : "Mute Smith")
+            .accessibilityHint("Stops or resumes microphone transmission immediately")
         }
         .padding(.horizontal, 17).padding(.top, 8).padding(.bottom, 10).background(.black.opacity(0.22))
     }
 
     private var connectionText: String {
         if !model.isRegistered { return "SETUP" }
-        if model.voice.muted { return "MUTED" }
+        if displayedMuted { return "MUTED" }
         if model.voice.connected && model.voice.audioPacketsSent > 0 { return "LIVE" }
         return model.voice.state
     }
 
     private var connectionColor: Color {
         if model.voice.lastError != nil && !model.voice.connected { return .red }
-        if model.voice.muted { return .orange }
+        if displayedMuted { return .orange }
         if model.voice.connected { return .green }
         return .cyan
     }
@@ -217,12 +238,18 @@ struct SmithHomeView: View {
     private var dockHandle: some View {
         HStack {
             Button(action: toggleMicrophone) {
-                Image(systemName: model.voice.muted ? "mic.slash.fill" : "mic.fill")
-                    .foregroundStyle(model.voice.muted ? .orange : .cyan)
-                    .frame(width: 42, height: 42)
+                VStack(spacing: 2) {
+                    Image(systemName: displayedMuted ? "mic.slash.fill" : "mic.fill")
+                    Text(displayedMuted ? "UNMUTE" : "MUTE")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                }
+                .foregroundStyle(displayedMuted ? .orange : .cyan)
+                .frame(width: 52, height: 44)
+                .background((displayedMuted ? Color.orange : Color.cyan).opacity(0.09), in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(model.voice.muted ? "Unmute Smith" : "Mute Smith")
+            .accessibilityLabel(displayedMuted ? "Unmute Smith" : "Mute Smith")
+            .accessibilityHint("Stops or resumes microphone transmission immediately")
 
             Spacer()
 
@@ -294,6 +321,19 @@ struct SmithHomeView: View {
         .padding(14).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 23))
         .overlay(RoundedRectangle(cornerRadius: 23).stroke(.cyan.opacity(0.17)))
     }
+}
+
+struct SmithSafariView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let controller = SFSafariViewController(url: url)
+        controller.preferredControlTintColor = .cyan
+        controller.dismissButtonStyle = .close
+        return controller
+    }
+
+    func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
 }
 
 struct SmithCoreOrb: View {

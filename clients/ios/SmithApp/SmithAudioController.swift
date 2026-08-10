@@ -7,7 +7,7 @@ final class SmithAudioController {
     private var converter: AVAudioConverter?
     private var interruptionObserver: NSObjectProtocol?
     private var routeObserver: NSObjectProtocol?
-    private let outputGain: Float = 1.55
+    private var outputGain: Float = 1.55
 
     init() {
         engine.attach(player)
@@ -44,6 +44,12 @@ final class SmithAudioController {
         }
 
         let input = engine.inputNode
+        // Activate Apple's acoustic echo cancellation, automatic gain control
+        // and speech noise suppression before microphone frames leave iOS.
+        // The guard avoids reconfiguring a running audio engine.
+        if !input.isVoiceProcessingEnabled {
+            try? input.setVoiceProcessingEnabled(true)
+        }
         let sourceFormat = input.outputFormat(forBus: 0)
         guard sourceFormat.sampleRate.isFinite,
               sourceFormat.sampleRate > 0,
@@ -124,6 +130,17 @@ final class SmithAudioController {
         } catch {
             resetPlayback()
         }
+    }
+
+    @discardableResult
+    func setOutputGain(_ gain: Float) -> Int {
+        outputGain = min(2.5, max(0, gain))
+        return Int((outputGain / 2.5 * 100).rounded())
+    }
+
+    @discardableResult
+    func adjustOutputGain(by delta: Float) -> Int {
+        setOutputGain(outputGain + delta)
     }
 
     func resetPlayback() {

@@ -41,6 +41,7 @@ final class SmithPermissionManager: NSObject, ObservableObject, CLLocationManage
             .init(id: "location", title: "Location", status: locationStatus, symbol: "location.fill"),
             .init(id: "notifications", title: "Notifications", status: "Check Settings", symbol: "bell.fill"),
             .init(id: "files", title: "Files / Google Drive", status: "OAuth required", symbol: "folder.fill"),
+            .init(id: "apps", title: "Apps / Shortcuts", status: "URL schemes", symbol: "square.grid.2x2.fill"),
         ]
     }
 
