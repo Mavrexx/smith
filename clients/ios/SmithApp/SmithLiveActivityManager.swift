@@ -11,7 +11,14 @@ final class SmithLiveActivityManager {
     private var activity: Activity<SmithVoiceActivityAttributes>?
 
     func start() {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled, activity == nil else { return }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        if activity == nil {
+            activity = Activity<SmithVoiceActivityAttributes>.activities.first
+        }
+        guard activity == nil else {
+            update(state: "CONNECTING", subtitle: "Starting private voice session")
+            return
+        }
         let attributes = SmithVoiceActivityAttributes(sessionID: UUID())
         let content = ActivityContent(
             state: SmithVoiceActivityAttributes.ContentState(
@@ -20,11 +27,19 @@ final class SmithLiveActivityManager {
             ),
             staleDate: nil
         )
-        activity = try? Activity.request(attributes: attributes, content: content)
+        do {
+            activity = try Activity.request(attributes: attributes, content: content)
+        } catch {
+            print("Smith Live Activity could not start: \(error.localizedDescription)")
+        }
     }
 
     func update(state: String, subtitle: String) {
-        guard let activity else { return }
+        if activity == nil { activity = Activity<SmithVoiceActivityAttributes>.activities.first }
+        guard let activity else {
+            start()
+            return
+        }
         let content = ActivityContent(
             state: SmithVoiceActivityAttributes.ContentState(state: state, subtitle: subtitle),
             staleDate: Date().addingTimeInterval(90)

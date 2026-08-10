@@ -16,6 +16,8 @@
   </dict></array>
   <key>LSApplicationQueriesSchemes</key><array><string>smith</string></array>
   <key>NSSupportsLiveActivities</key><true/>
+  <key>NSAlarmKitUsageDescription</key>
+  <string>Smith schedules only the alarms you explicitly ask it to create.</string>
   <key>NSContactsUsageDescription</key>
   <string>Smith uses contacts only for actions you explicitly request.</string>
   <key>NSCalendarsFullAccessUsageDescription</key>

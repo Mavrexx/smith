@@ -27,6 +27,7 @@ final class SmithVoiceSession: ObservableObject {
     private let api: SmithAPI
     private let audio = SmithAudioController()
     private let liveActivity = SmithLiveActivityManager()
+    private let personalActions = SmithPersonalActions()
     private var socket: URLSessionWebSocketTask?
     private var heartbeat: Task<Void, Never>?
     private var reconnect: Task<Void, Never>?
@@ -359,6 +360,31 @@ final class SmithVoiceSession: ObservableObject {
                 success = await UIApplication.shared.open(url)
                 message = success ? "Opened Apple Shortcuts." : "Apple Shortcuts could not be opened."
             }
+        case "add_calendar_event":
+            let result = await personalActions.addCalendarEvent(args)
+            success = result.success
+            message = result.message
+            data = result.data
+        case "list_calendar_events":
+            let result = await personalActions.listCalendarEvents()
+            success = result.success
+            message = result.message
+            data = result.data
+        case "add_reminder":
+            let result = await personalActions.addReminder(args)
+            success = result.success
+            message = result.message
+            data = result.data
+        case "list_reminders":
+            let result = await personalActions.listReminders()
+            success = result.success
+            message = result.message
+            data = result.data
+        case "set_alarm":
+            let result = await personalActions.setAlarm(args)
+            success = result.success
+            message = result.message
+            data = result.data
         case "run_shortcut":
             let name = String(describing: args["name"] ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
