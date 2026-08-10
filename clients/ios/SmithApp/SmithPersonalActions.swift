@@ -114,7 +114,17 @@ final class SmithPersonalActions {
         }
         let title = nonempty(args["title"]) ?? "Smith Alarm"
 #if canImport(AlarmKit)
-        if #available(iOS 26.0, *) { return await setAlarmKitAlarm(title: title, fireDate: fireDate) }
+        if #available(iOS 26.0, *) {
+            let systemAlarm = await setAlarmKitAlarm(title: title, fireDate: fireDate)
+            if systemAlarm.success { return systemAlarm }
+            let fallback = await setNotificationAlarm(title: title, fireDate: fireDate)
+            if fallback.success {
+                return .init(success: true,
+                             message: "The full system alarm was unavailable, but I scheduled and verified a Smith alert for \(format(fireDate)).",
+                             data: fallback.data)
+            }
+            return .init(success: false, message: "System alarm failed: \(systemAlarm.message) Alert fallback failed: \(fallback.message)")
+        }
 #endif
         return await setNotificationAlarm(title: title, fireDate: fireDate)
     }

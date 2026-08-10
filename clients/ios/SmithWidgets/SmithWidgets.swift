@@ -76,11 +76,20 @@ struct SmithLiveActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: "waveform").foregroundStyle(.cyan)
+                HStack(spacing: 2) {
+                    Text("S").font(.caption.bold())
+                    Image(systemName: "waveform").font(.caption2.bold())
+                }
+                .foregroundStyle(.cyan)
+                .accessibilityLabel("Smith active")
             } compactTrailing: {
-                Circle().fill(.green).frame(width: 7, height: 7)
+                Text("LIVE")
+                    .font(.system(size: 8, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.green)
+                    .accessibilityLabel(context.state.state)
             } minimal: {
-                Image(systemName: "waveform").foregroundStyle(.cyan)
+                Text("S").font(.caption.bold()).foregroundStyle(.cyan)
+                    .accessibilityLabel("Smith")
             }
             .widgetURL(SmithRoute.voiceURL())
         }
