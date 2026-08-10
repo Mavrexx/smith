@@ -183,10 +183,10 @@ private extension SmithPersonalActions {
             }
             let id = UUID()
             let stop = AlarmButton(text: "Stop", textColor: .white, systemImageName: "stop.circle.fill")
-            let alert = AlarmPresentation.Alert(title: title, stopButton: stop)
+            let alert = AlarmPresentation.Alert(title: "Smith Alarm", stopButton: stop)
             let attributes = AlarmAttributes<SmithAlarmMetadata>(presentation: AlarmPresentation(alert: alert), tintColor: .cyan)
             let configuration = AlarmManager.AlarmConfiguration<SmithAlarmMetadata>(schedule: .fixed(fireDate), attributes: attributes)
-            let saved = try await manager.schedule(id: id, configuration: configuration)
+            let saved: Alarm = try await manager.schedule(id: id, configuration: configuration)
             let verified = try manager.alarms.contains { $0.id == saved.id }
             guard verified else { return .init(success: false, message: "AlarmKit did not return the alarm during verification, so I will not claim it is done.") }
             return .init(success: true, message: "Set and verified \(title) for \(format(fireDate)). It will use the iOS system alarm even in silent or Focus mode.", data: ["alarm_id": id.uuidString, "alarm_ms": fireDate.timeIntervalSince1970 * 1000, "kind": "alarmkit"])
