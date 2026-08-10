@@ -326,26 +326,29 @@ final class SmithVoiceSession: ObservableObject {
         case "device_command":
             Task { [weak self] in await self?.executeDeviceCommand(payload) }
         case "audio":
-            if let encoded = payload["data"] as? String,
-               let chunk = Data(base64Encoded: encoded) {
-                state = "SPEAKING"
-                liveActivity.update(state: "SPEAKING", subtitle: transcript.isEmpty ? "Smith is responding" : transcript)
-                audio.play(pcm16: chunk)
+            if let encoded = payload["data"] as? String {
+                if state != "SPEAKING" {
+                    state = "SPEAKING"
+                    liveActivity.update(state: "SPEAKING", subtitle: transcript.isEmpty ? "Smith is responding" : transcript)
+                }
+                audio.play(base64PCM16: encoded)
             }
         case "audioReset", "interrupted":
             audio.resetPlayback()
-            state = muted ? "MUTED" : "LISTENING"
+            let nextState = muted ? "MUTED" : "LISTENING"
+            if state != nextState { state = nextState }
         case "transcript":
-            if let text = payload["text"] as? String {
+            if let text = payload["text"] as? String, text != transcript {
                 transcript = text
                 if payload["role"] as? String == "user" {
-                    userTranscript = text
+                    if userTranscript != text { userTranscript = text }
                 } else {
-                    assistantTranscript = text
+                    if assistantTranscript != text { assistantTranscript = text }
                 }
             }
         case "turnComplete":
-            state = muted ? "MUTED" : "LISTENING"
+            let nextState = muted ? "MUTED" : "LISTENING"
+            if state != nextState { state = nextState }
         case "reconnecting":
             audio.resetPlayback()
             state = "RECONNECTING"

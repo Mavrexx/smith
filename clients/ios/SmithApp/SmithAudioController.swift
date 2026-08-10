@@ -1,9 +1,10 @@
 import AVFoundation
 import Foundation
 
-final class SmithAudioController {
+final class SmithAudioController: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    private let playbackProcessingQueue = DispatchQueue(label: "com.farhan.smith.playback-processing", qos: .utility)
     private var converter: AVAudioConverter?
     private var interruptionObserver: NSObjectProtocol?
     private var routeObserver: NSObjectProtocol?
@@ -49,27 +50,36 @@ final class SmithAudioController {
         setOutputGain(outputGain + delta)
     }
 
-    func play(pcm16 data: Data) {
-        let frames = AVAudioFrameCount(data.count / MemoryLayout<Int16>.size)
-        guard frames > 0,
-              let format = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: 24_000,
-                channels: 1,
-                interleaved: false
-              ),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
-              let destination = buffer.floatChannelData?.pointee else { return }
-
-        buffer.frameLength = frames
+    func play(base64PCM16 encoded: String) {
         let gain = outputGain
-        data.withUnsafeBytes { raw in
-            let samples = raw.bindMemory(to: Int16.self)
-            for index in 0..<min(Int(frames), samples.count) {
-                let value = Float(Int16(littleEndian: samples[index])) / 32_768
-                destination[index] = tanh(value * gain)
+        playbackProcessingQueue.async { [weak self] in
+            guard let self, let data = Data(base64Encoded: encoded) else { return }
+            let frames = AVAudioFrameCount(data.count / MemoryLayout<Int16>.size)
+            guard frames > 0,
+                  let format = AVAudioFormat(
+                    commonFormat: .pcmFormatFloat32,
+                    sampleRate: 24_000,
+                    channels: 1,
+                    interleaved: false
+                  ),
+                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+                  let destination = buffer.floatChannelData?.pointee else { return }
+
+            buffer.frameLength = frames
+            data.withUnsafeBytes { raw in
+                let samples = raw.bindMemory(to: Int16.self)
+                for index in 0..<min(Int(frames), samples.count) {
+                    let value = Float(Int16(littleEndian: samples[index])) / 32_768 * gain
+                    destination[index] = min(1, max(-1, value))
+                }
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.schedulePlayback(buffer)
             }
         }
+    }
+
+    private func schedulePlayback(_ buffer: AVAudioPCMBuffer) {
         do {
             try startEngineIfNeeded()
             if !player.isPlaying { player.play() }
@@ -136,14 +146,16 @@ final class SmithAudioController {
         // two WebSocket/JSON/MainActor operations per server frame without adding
         // any server-side voice-detection delay.
         let tapFrames = AVAudioFrameCount(max(640, sourceFormat.sampleRate * 0.04))
-        input.installTap(onBus: 0, bufferSize: tapFrames, format: nil) { [weak self] buffer, _ in
-            guard let self, let converter = self.converter else { return }
-            let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
-            let capacity = max(1, AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1)
-            guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
+        let conversionRatio = targetFormat.sampleRate / sourceFormat.sampleRate
+        let outputCapacity = max(1, AVAudioFrameCount(Double(tapFrames) * conversionRatio) + 1)
+        guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {
+            throw AudioError.converterUnavailable
+        }
+        input.installTap(onBus: 0, bufferSize: tapFrames, format: nil) { buffer, _ in
+            converted.frameLength = 0
             var supplied = false
             var conversionError: NSError?
-            converter.convert(to: converted, error: &conversionError) { _, status in
+            audioConverter.convert(to: converted, error: &conversionError) { _, status in
                 if supplied {
                     status.pointee = .noDataNow
                     return nil
@@ -156,13 +168,7 @@ final class SmithAudioController {
                   converted.frameLength > 0,
                   let samples = converted.int16ChannelData?.pointee else { return }
             let count = Int(converted.frameLength)
-            var energy: Double = 0
-            for index in 0..<count {
-                let value = Double(samples[index]) / 32_768
-                energy += value * value
-            }
-            let level = Float(min(1, sqrt(energy / Double(max(1, count))) * 14))
-            onPCM16(Data(bytes: samples, count: count * MemoryLayout<Int16>.size), level)
+            onPCM16(Data(bytes: samples, count: count * MemoryLayout<Int16>.size), 0)
         }
         try startEngineIfNeeded()
     }

@@ -9,6 +9,8 @@ final class SmithLiveActivityManager {
     func end() {}
 #else
     private var activity: Activity<SmithVoiceActivityAttributes>?
+    private var lastState: String?
+    private var lastSubtitle: String?
 
     func start() {
         guard ActivityAuthorizationInfo().areActivitiesEnabled, activity == nil else { return }
@@ -21,10 +23,14 @@ final class SmithLiveActivityManager {
             staleDate: nil
         )
         activity = try? Activity.request(attributes: attributes, content: content)
+        lastState = "CONNECTING"
+        lastSubtitle = "Starting private voice session"
     }
 
     func update(state: String, subtitle: String) {
-        guard let activity else { return }
+        guard let activity, state != lastState || subtitle != lastSubtitle else { return }
+        lastState = state
+        lastSubtitle = subtitle
         let content = ActivityContent(
             state: SmithVoiceActivityAttributes.ContentState(state: state, subtitle: subtitle),
             staleDate: Date().addingTimeInterval(90)
@@ -35,6 +41,8 @@ final class SmithLiveActivityManager {
     func end() {
         guard let activity else { return }
         self.activity = nil
+        lastState = nil
+        lastSubtitle = nil
         let final = ActivityContent(
             state: SmithVoiceActivityAttributes.ContentState(
                 state: "ENDED",
