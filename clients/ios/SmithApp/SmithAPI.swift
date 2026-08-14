@@ -119,6 +119,8 @@ actor SmithAPI {
         return try await send(request)
     }
 
+    func deviceID() throws -> String { try persistentDeviceID() }
+
     func revokeLocalDevice() {
         SmithKeychain.remove("device-token")
         sessionToken = nil

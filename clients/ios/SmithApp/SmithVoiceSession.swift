@@ -320,7 +320,7 @@ final class SmithVoiceSession: ObservableObject {
             "cameraAvailable": UIImagePickerController.isSourceTypeAvailable(.camera),
             "visionAvailable": true,
             "os": "iOS \(UIDevice.current.systemVersion)",
-            "capabilities": ["voice", "keyboard", "vision", "photos", "apps", "shortcuts"],
+            "capabilities": ["voice", "keyboard", "vision", "photos", "apps", "shortcuts", "remote_app_receiver"],
             "lastInteractionAt": Date().timeIntervalSince1970 * 1000,
         ]
         if let batteryPercent { presence["batteryPercent"] = batteryPercent }
@@ -330,6 +330,20 @@ final class SmithVoiceSession: ObservableObject {
     private func executeDeviceCommand(_ payload: [String: Any]) async {
         guard let id = payload["id"] as? String,
               let command = payload["command"] as? String else { return }
+        let targetDeviceID = payload["targetDeviceId"] as? String
+        let localDeviceID = try? await api.deviceID()
+        guard let targetDeviceID, let localDeviceID, targetDeviceID == localDeviceID else {
+            try? await send([
+                "type": "device_command_result",
+                "id": id,
+                "command": command,
+                "targetDeviceId": localDeviceID ?? "unknown",
+                "success": false,
+                "message": "Rejected a remote command that was not explicitly addressed to this registered iPhone.",
+                "data": [:],
+            ])
+            return
+        }
         let args = payload["args"] as? [String: Any] ?? [:]
         var success = false
         var message = "Unsupported iPhone command."
@@ -510,6 +524,8 @@ final class SmithVoiceSession: ObservableObject {
         try? await send([
             "type": "device_command_result",
             "id": id,
+            "command": command,
+            "targetDeviceId": targetDeviceID,
             "success": success,
             "message": message,
             "data": data,
