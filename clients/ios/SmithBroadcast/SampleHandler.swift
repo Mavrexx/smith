@@ -1,7 +1,9 @@
 import CoreImage
 import Foundation
+import ImageIO
 import Network
 import ReplayKit
+import UniformTypeIdentifiers
 
 final class SampleHandler: RPBroadcastSampleHandler {
     private static let port = NWEndpoint.Port(rawValue: 48_173)!
@@ -35,16 +37,27 @@ final class SampleHandler: RPBroadcastSampleHandler {
         guard extent.width > 0, extent.height > 0 else { return nil }
         let scale = min(1, 720 / max(extent.width, extent.height))
         let resized = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
         for quality in [0.42, 0.28] {
-            let options: [CIImageRepresentationOption: Any] = [.lossyCompressionQuality: quality]
-            if let value = imageContext.jpegRepresentation(
-                of: resized,
-                colorSpace: colorSpace,
-                options: options
-            ), value.count <= 190_000 { return value }
+            if let value = encodedJPEG(resized, quality: quality), value.count <= 190_000 {
+                return value
+            }
         }
         return nil
+    }
+
+    private func encodedJPEG(_ image: CIImage, quality: Double) -> Data? {
+        guard let cgImage = imageContext.createCGImage(image, from: image.extent) else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output as CFMutableData,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        let properties = [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary
+        CGImageDestinationAddImage(destination, cgImage, properties)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
     }
 
     private func send(_ frame: Data, finished: @escaping () -> Void) {
