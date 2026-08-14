@@ -114,6 +114,21 @@ final class SmithVoiceSession: ObservableObject {
         }
     }
 
+    func sendScreenFrame(_ data: Data) async {
+        guard connected, shouldRun, data.count <= 190_000 else { return }
+        do {
+            try await send([
+                "type": "media",
+                "data": data.base64EncodedString(),
+                "mimeType": "image/jpeg",
+                "name": "iPhone live screen.jpg",
+            ])
+            lastError = nil
+        } catch {
+            lastError = "Screen share paused: \(error.localizedDescription)"
+        }
+    }
+
     func stop() async {
         shouldRun = false
         heartbeat?.cancel()

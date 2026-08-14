@@ -6,8 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    CURRENT_PROJECT_VERSION: 20260814
-    MARKETING_VERSION: 2.3.1
+    CURRENT_PROJECT_VERSION: 2026081401
+    MARKETING_VERSION: 2.3.2
     DEVELOPMENT_TEAM: ""
 targets:
   Smith:
@@ -35,6 +35,8 @@ targets:
       - target: SmithShare
         embed: true
       - target: SmithNotificationService
+        embed: true
+      - target: SmithBroadcast
         embed: true
   SmithLite:
     type: application
@@ -114,6 +116,21 @@ targets:
         INFOPLIST_FILE: SmithNotificationService/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
+  SmithBroadcast:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SmithBroadcast
+        excludes:
+          - Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.farhan.smith.broadcast
+        PRODUCT_NAME: SmithBroadcast
+        INFOPLIST_FILE: SmithBroadcast/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
   SmithTests:
     type: bundle.unit-test
     platform: iOS

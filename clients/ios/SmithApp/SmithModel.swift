@@ -22,8 +22,22 @@ final class SmithModel: ObservableObject {
 
     let api = SmithAPI()
     lazy var voice = SmithVoiceSession(api: api)
+    let screenShare = SmithScreenShareReceiver()
 
     private var lastIntentTranscript = ""
+    private var screenFrameInFlight = false
+
+    func prepareScreenShare() {
+        screenShare.start()
+        screenShare.onFrame = { [weak self] data in
+            Task { @MainActor in
+                guard let self, !self.screenFrameInFlight else { return }
+                self.screenFrameInFlight = true
+                await self.voice.sendScreenFrame(data)
+                self.screenFrameInFlight = false
+            }
+        }
+    }
 
     func register() async {
         do {

@@ -1,13 +1,20 @@
 import AVFoundation
 import PhotosUI
+import ReplayKit
 import SwiftUI
 import UIKit
 
 struct SmithVisionPage: View {
     @ObservedObject var model: SmithModel
+    @ObservedObject private var screenShare: SmithScreenShareReceiver
     @State private var photo: PhotosPickerItem?
     @State private var cameraOpen = false
     @State private var message = "Choose Camera or Photos. Smith analyses only the image you explicitly share."
+
+    init(model: SmithModel) {
+        _model = ObservedObject(wrappedValue: model)
+        _screenShare = ObservedObject(wrappedValue: model.screenShare)
+    }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -31,7 +38,32 @@ struct SmithVisionPage: View {
                 }
                 .buttonStyle(.bordered).tint(.cyan)
             }.padding(.horizontal, 18)
+            HStack(spacing: 14) {
+                SmithBroadcastPicker().frame(width: 48, height: 48)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(screenShare.active ? "SCREEN SHARING LIVE" : "SHARE IPHONE SCREEN")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(screenShare.active ? .green : .cyan)
+                    Text(screenShare.active
+                         ? "Smith receives one private frame every two seconds. Tap the red system control to stop."
+                         : "Tap the broadcast icon, choose Smith, then Start Broadcast.")
+                        .font(.caption2).foregroundStyle(.white.opacity(0.52))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .background(.cyan.opacity(0.055), in: RoundedRectangle(cornerRadius: 15))
+            .overlay(RoundedRectangle(cornerRadius: 15).stroke((screenShare.active ? Color.green : .cyan).opacity(0.2)))
+            .padding(.horizontal, 18)
+            if let screenError = screenShare.lastError {
+                Text(screenError).font(.caption2.monospaced()).foregroundStyle(.orange)
+                    .padding(.horizontal, 22)
+            }
             Spacer()
+        }
+        .task {
+            model.prepareScreenShare()
+            if !model.voice.connected { await model.wake() }
         }
         .onChange(of: photo) { _, item in
             guard let item else { return }
@@ -73,6 +105,35 @@ struct SmithVisionPage: View {
             if let value = resized.jpegData(compressionQuality: quality), value.count < 185_000 { return value }
         }
         return nil
+    }
+}
+
+struct SmithBroadcastPicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> RPSystemBroadcastPickerView {
+        let picker = RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 48, height: 48))
+        picker.preferredExtension = broadcastExtensionIdentifier()
+        picker.showsMicrophoneButton = false
+        picker.tintColor = .cyan
+        return picker
+    }
+
+    func updateUIView(_ picker: RPSystemBroadcastPickerView, context: Context) {
+        picker.preferredExtension = broadcastExtensionIdentifier()
+    }
+
+    private func broadcastExtensionIdentifier() -> String? {
+        guard let plugIns = Bundle.main.builtInPlugInsURL,
+              let urls = try? FileManager.default.contentsOfDirectory(
+                at: plugIns,
+                includingPropertiesForKeys: nil
+              ) else { return nil }
+        return urls.lazy
+            .compactMap { Bundle(url: $0) }
+            .first {
+                $0.object(forInfoDictionaryKey: "NSExtension") != nil &&
+                    $0.bundleURL.lastPathComponent.contains("Broadcast")
+            }
+            ?.bundleIdentifier
     }
 }
 
