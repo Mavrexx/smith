@@ -127,13 +127,13 @@ struct SmithBroadcastPicker: UIViewRepresentable {
                 at: plugIns,
                 includingPropertiesForKeys: nil
               ) else { return nil }
-        return urls.lazy
+        let broadcastBundle = urls.lazy
             .compactMap { Bundle(url: $0) }
             .first {
                 $0.object(forInfoDictionaryKey: "NSExtension") != nil &&
                     $0.bundleURL.lastPathComponent.contains("Broadcast")
             }
-            ?.bundleIdentifier
+        return broadcastBundle?.bundleIdentifier
     }
 }
 
