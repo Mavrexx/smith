@@ -8,6 +8,12 @@ final class SmithAudioController {
     private var interruptionObserver: NSObjectProtocol?
     private var routeObserver: NSObjectProtocol?
     private var outputGain: Float = 1.55
+    private let startupBufferFrames: AVAudioFrameCount = 3_840 // 160 ms at 24 kHz
+    private var pendingPlaybackBuffers: [AVAudioPCMBuffer] = []
+    private var pendingPlaybackFrames: AVAudioFrameCount = 0
+    private var scheduledPlaybackBuffers = 0
+    private var playbackStarted = false
+    private var playbackGeneration = 0
 
     init() {
         engine.attach(player)
@@ -123,12 +129,56 @@ final class SmithAudioController {
                 destination[index] = min(1, max(-1, amplified))
             }
         }
+        pendingPlaybackBuffers.append(buffer)
+        pendingPlaybackFrames += frames
+        guard playbackStarted || pendingPlaybackFrames >= startupBufferFrames else { return }
         do {
             try startEngineIfNeeded()
-            if !player.isPlaying { player.play() }
-            player.scheduleBuffer(buffer)
+            drainPendingPlayback()
         } catch {
             resetPlayback()
+        }
+    }
+
+    func finishPlaybackTurn() {
+        guard !pendingPlaybackBuffers.isEmpty else { return }
+        do {
+            try startEngineIfNeeded()
+            drainPendingPlayback()
+        } catch {
+            resetPlayback()
+        }
+    }
+
+    private func drainPendingPlayback() {
+        let buffers = pendingPlaybackBuffers
+        pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+        pendingPlaybackFrames = 0
+        if !playbackStarted { playbackStarted = true }
+        for buffer in buffers { schedulePlayback(buffer) }
+        if !player.isPlaying { player.play() }
+    }
+
+    private func schedulePlayback(_ buffer: AVAudioPCMBuffer) {
+        scheduledPlaybackBuffers += 1
+        let generation = playbackGeneration
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.playbackGeneration == generation else { return }
+                self.scheduledPlaybackBuffers = max(0, self.scheduledPlaybackBuffers - 1)
+                if self.scheduledPlaybackBuffers == 0 {
+                    self.playbackStarted = false
+                    if !self.pendingPlaybackBuffers.isEmpty,
+                       self.pendingPlaybackFrames >= self.startupBufferFrames {
+                        do {
+                            try self.startEngineIfNeeded()
+                            self.drainPendingPlayback()
+                        } catch {
+                            self.resetPlayback()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -144,6 +194,11 @@ final class SmithAudioController {
     }
 
     func resetPlayback() {
+        playbackGeneration += 1
+        pendingPlaybackBuffers.removeAll(keepingCapacity: true)
+        pendingPlaybackFrames = 0
+        scheduledPlaybackBuffers = 0
+        playbackStarted = false
         player.stop()
         player.reset()
     }

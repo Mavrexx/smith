@@ -226,6 +226,7 @@ final class SmithVoiceSession: ObservableObject {
                 }
             }
         case "turnComplete":
+            audio.finishPlaybackTurn()
             state = muted ? "MUTED" : "LISTENING"
         case "reconnecting":
             audio.resetPlayback()
