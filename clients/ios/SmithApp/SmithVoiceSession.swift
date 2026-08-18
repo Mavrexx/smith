@@ -11,6 +11,7 @@ struct SmithSafariDestination: Identifiable {
 @MainActor
 final class SmithVoiceSession: ObservableObject {
     @Published private(set) var connected = false
+    @Published private(set) var commandChannelConnected = false
     @Published private(set) var state = "IDLE"
     @Published private(set) var transcript = ""
     @Published private(set) var userTranscript = ""
@@ -34,25 +35,31 @@ final class SmithVoiceSession: ObservableObject {
     private var shouldRun = false
     private var attempt = 0
     private var captureStarted = false
+    private var microphonePermissionGranted = false
+    private var isForeground = true
+    private var requestedPrimaryForConnection = false
+    private var starting = false
 
     init(api: SmithAPI) {
         self.api = api
     }
 
     func start() async {
-        guard !shouldRun else { return }
+        if shouldRun {
+            if socket == nil { await connect() }
+            return
+        }
+        guard !starting else { return }
+        starting = true
+        defer { starting = false }
         let permission = await withCheckedContinuation { continuation in
             AVAudioSession.sharedInstance().requestRecordPermission {
                 continuation.resume(returning: $0)
             }
         }
-        guard permission else {
-            state = "PERMISSION REQUIRED"
-            lastError = "Microphone permission is required. Open iPhone Settings to allow Smith microphone access."
-            return
-        }
+        microphonePermissionGranted = permission
         shouldRun = true
-        lastError = nil
+        lastError = permission ? nil : "Microphone access is off. Remote commands and typed requests remain available."
         liveActivity.start()
         attempt = 0
         await connect()
@@ -141,6 +148,7 @@ final class SmithVoiceSession: ObservableObject {
         captureStarted = false
         microphoneLevel = 0
         connected = false
+        commandChannelConnected = false
         state = "IDLE"
         audio.stop()
         liveActivity.end()
@@ -153,12 +161,10 @@ final class SmithVoiceSession: ObservableObject {
             let url = try await api.webSocketURL()
             let task = URLSession.shared.webSocketTask(with: url)
             socket = task
+            requestedPrimaryForConnection = false
             task.resume()
             receive(on: task)
-            startHeartbeat()
-            Task { [weak self] in
-                try? await self?.announcePresenceAndRequestPrimary()
-            }
+            startHeartbeat(on: task)
         } catch {
             await scheduleReconnect(error)
         }
@@ -191,6 +197,7 @@ final class SmithVoiceSession: ObservableObject {
 
         switch type {
         case "ready":
+            commandChannelConnected = true
             connected = true
             state = muted ? "MUTED" : "LISTENING"
             liveActivity.update(
@@ -199,22 +206,32 @@ final class SmithVoiceSession: ObservableObject {
             )
             attempt = 0
             textModeAvailable = true
-            startCaptureIfNeeded()
+            if microphonePermissionGranted { startCaptureIfNeeded() }
             Task { [weak self] in try? await self?.announcePresence() }
         case "secondary_ready":
+            commandChannelConnected = true
             connected = false
             state = "REQUESTING HANDOFF"
-            Task { [weak self] in try? await self?.announcePresenceAndRequestPrimary() }
+            Task { [weak self] in
+                guard let self else { return }
+                try? await self.announcePresence()
+                guard !self.requestedPrimaryForConnection else { return }
+                self.requestedPrimaryForConnection = true
+                try? await self.send(["type": "request_primary"])
+            }
         case "primary_changed":
             if payload["primary"] as? Bool == true {
+                commandChannelConnected = true
                 state = "CONNECTING"
             } else {
                 connected = false
-                state = "READY FOR HANDOFF"
+                commandChannelConnected = true
+                state = "REMOTE READY"
             }
         case "handoff_failed":
             connected = false
-            state = "HANDOFF BLOCKED"
+            commandChannelConnected = true
+            state = "REMOTE READY"
             lastError = payload["message"] as? String ?? "Smith voice is active on another device."
         case "handoff_incoming":
             state = "HANDOFF INCOMING"
@@ -311,16 +328,16 @@ final class SmithVoiceSession: ObservableObject {
             "deviceName": UIDevice.current.name,
             "deviceModel": UIDevice.current.model,
             "chargingState": chargingStateName,
-            "foreground": true,
+            "foreground": isForeground,
             "locked": false,
-            "voiceInput": true,
+            "voiceInput": microphonePermissionGranted,
             "voicePlayback": true,
             "privacyMode": muted,
-            "microphoneActive": !muted,
+            "microphoneActive": microphonePermissionGranted && !muted && connected,
             "cameraAvailable": UIImagePickerController.isSourceTypeAvailable(.camera),
             "visionAvailable": true,
             "os": "iOS \(UIDevice.current.systemVersion)",
-            "capabilities": ["voice", "keyboard", "vision", "photos", "apps", "shortcuts", "remote_app_receiver"],
+            "capabilities": ["voice", "keyboard", "vision", "photos", "apps", "shortcuts", "remote_app_receiver", "remote_app_sender"],
             "lastInteractionAt": Date().timeIntervalSince1970 * 1000,
         ]
         if let batteryPercent { presence["batteryPercent"] = batteryPercent }
@@ -330,20 +347,6 @@ final class SmithVoiceSession: ObservableObject {
     private func executeDeviceCommand(_ payload: [String: Any]) async {
         guard let id = payload["id"] as? String,
               let command = payload["command"] as? String else { return }
-        let targetDeviceID = payload["targetDeviceId"] as? String
-        let localDeviceID = try? await api.deviceID()
-        guard let targetDeviceID, let localDeviceID, targetDeviceID == localDeviceID else {
-            try? await send([
-                "type": "device_command_result",
-                "id": id,
-                "command": command,
-                "targetDeviceId": localDeviceID ?? "unknown",
-                "success": false,
-                "message": "Rejected a remote command that was not explicitly addressed to this registered iPhone.",
-                "data": [:],
-            ])
-            return
-        }
         let args = payload["args"] as? [String: Any] ?? [:]
         var success = false
         var message = "Unsupported iPhone command."
@@ -524,8 +527,6 @@ final class SmithVoiceSession: ObservableObject {
         try? await send([
             "type": "device_command_result",
             "id": id,
-            "command": command,
-            "targetDeviceId": targetDeviceID,
             "success": success,
             "message": message,
             "data": data,
@@ -573,35 +574,60 @@ final class SmithVoiceSession: ObservableObject {
         )
     }
 
-    private func announcePresenceAndRequestPrimary() async throws {
-        try await announcePresence()
-        try await send(["type": "request_primary"])
-    }
-
     private func send(_ object: [String: Any]) async throws {
-        guard let socket else { return }
+        guard let socket else {
+            throw NSError(domain: "Smith", code: 3, userInfo: [NSLocalizedDescriptionKey: "Smith command channel is disconnected."])
+        }
         let data = try JSONSerialization.data(withJSONObject: object)
         try await socket.send(.string(String(decoding: data, as: UTF8.self)))
     }
 
-    private func startHeartbeat() {
+    private func startHeartbeat(on task: URLSessionWebSocketTask) {
         heartbeat?.cancel()
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
-                guard let self, self.shouldRun else { return }
-                try? await self.send(["type": "ping"])
+                guard let self, self.shouldRun, self.socket === task else { return }
+                do {
+                    try await self.send(["type": "ping"])
+                } catch {
+                    await self.scheduleReconnect(error)
+                    return
+                }
             }
         }
+    }
+
+    func sceneDidBecomeActive() async {
+        isForeground = true
+        guard shouldRun else { return }
+        guard socket != nil else {
+            await connect()
+            return
+        }
+        do {
+            try await announcePresence()
+            try await send(["type": "ping"])
+        } catch {
+            await scheduleReconnect(error)
+        }
+    }
+
+    func sceneDidEnterBackground() {
+        isForeground = false
+        guard shouldRun, socket != nil else { return }
+        Task { [weak self] in try? await self?.announcePresence() }
     }
 
     private func scheduleReconnect(_ error: Error) async {
         guard shouldRun else { return }
         connected = false
+        commandChannelConnected = false
         audio.resetPlayback()
         socket?.cancel()
         socket = nil
         heartbeat?.cancel()
+        requestedPrimaryForConnection = false
         lastError = "Connection interrupted: \(error.localizedDescription). Reconnecting automatically."
         attempt += 1
         state = "RECONNECTING"

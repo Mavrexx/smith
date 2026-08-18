@@ -123,13 +123,15 @@ struct SmithHomeView: View {
         if !model.isRegistered { return "SETUP" }
         if displayedMuted { return "MUTED" }
         if model.voice.connected && model.voice.audioPacketsSent > 0 { return "LIVE" }
+        if model.voice.commandChannelConnected && !model.voice.connected { return "REMOTE" }
         return model.voice.state
     }
 
     private var connectionColor: Color {
-        if model.voice.lastError != nil && !model.voice.connected { return .red }
+        if model.voice.lastError != nil && !model.voice.commandChannelConnected { return .red }
         if displayedMuted { return .orange }
         if model.voice.connected { return .green }
+        if model.voice.commandChannelConnected { return .cyan }
         return .cyan
     }
 

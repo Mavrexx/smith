@@ -72,6 +72,19 @@ final class SmithModel: ObservableObject {
         status = voice.lastError ?? (voice.connected ? "ONLINE" : voice.state)
     }
 
+    func sceneDidBecomeActive() async {
+        guard isRegistered else { return }
+        if voice.commandChannelConnected {
+            await voice.sceneDidBecomeActive()
+        } else {
+            await wake()
+        }
+    }
+
+    func sceneDidEnterBackground() {
+        voice.sceneDidEnterBackground()
+    }
+
     func openWorkspace(_ route: SmithRoute) {
         workspace = route == .conversations ? .voice : route
         environment = .workspace
