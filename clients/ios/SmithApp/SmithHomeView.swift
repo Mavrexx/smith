@@ -1,4 +1,5 @@
 import SafariServices
+import Photos
 import SwiftUI
 
 enum SmithPage: String, CaseIterable, Identifiable {
@@ -75,6 +76,9 @@ struct SmithHomeView: View {
             model.voice.safariDestination = nil
         }) { destination in
             SmithSafariView(url: destination.url).ignoresSafeArea()
+        }
+        .sheet(item: $model.voice.generatedImage, onDismiss: model.voice.dismissGeneratedImage) { image in
+            SmithGeneratedImageViewer(image: image)
         }
         .task {
             guard model.isRegistered else { return }
@@ -154,6 +158,18 @@ struct SmithHomeView: View {
             if model.voice.connected {
                 Text(model.voice.audioPacketsSent > 0 ? "Microphone streaming to Smith Core" : "Preparing microphone stream…")
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.white.opacity(0.42))
+            }
+            if let imageStatus = model.voice.imageJobStatus,
+               imageStatus == "queued" || imageStatus == "generating" || imageStatus == "cancel_requested" {
+                HStack(spacing: 8) {
+                    ProgressView().tint(.cyan)
+                    Text(imageStatus == "queued" ? "Image queued" : imageStatus == "cancel_requested" ? "Cancelling image…" : "Generating image…")
+                    Button("Cancel") { model.voice.cancelActiveImageGeneration() }
+                        .font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                }
+                .font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.72))
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(.white.opacity(0.05), in: Capsule())
             }
             if !model.voice.userTranscript.isEmpty || !model.voice.assistantTranscript.isEmpty {
                 ScrollView {
@@ -322,6 +338,51 @@ struct SmithHomeView: View {
         }
         .padding(14).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 23))
         .overlay(RoundedRectangle(cornerRadius: 23).stroke(.cyan.opacity(0.17)))
+    }
+}
+
+private struct SmithGeneratedImageViewer: View {
+    let image: SmithGeneratedImage
+    @Environment(\.dismiss) private var dismiss
+    @State private var saveMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 14) {
+                if let bitmap = UIImage(data: image.data) {
+                    Image(uiImage: bitmap).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 18))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ContentUnavailableView("Image unavailable", systemImage: "photo", description: Text("Smith couldn't decode the generated image."))
+                }
+                Text(image.prompt).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                Button { saveToPhotos() } label: {
+                    Label("Save to Photos", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                }
+                .buttonStyle(.borderedProminent)
+                if let saveMessage { Text(saveMessage).font(.caption).foregroundStyle(.secondary) }
+            }
+            .padding()
+            .navigationTitle("Smith Image")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+        }
+    }
+
+    private func saveToPhotos() {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                Task { @MainActor in saveMessage = "Photos permission is required to save." }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges {
+                let request = PHAssetCreationRequest.forAsset()
+                request.addResource(with: .photo, data: image.data, options: nil)
+            } completionHandler: { success, error in
+                Task { @MainActor in saveMessage = success ? "Saved to Photos." : (error?.localizedDescription ?? "Couldn't save image.") }
+            }
+        }
     }
 }
 

@@ -1,11 +1,19 @@
 import Combine
 import AVFoundation
 import Foundation
+import Photos
 import UIKit
 
 struct SmithSafariDestination: Identifiable {
     let id = UUID()
     let url: URL
+}
+
+struct SmithGeneratedImage: Identifiable {
+    let id: String
+    let data: Data
+    let mimeType: String
+    let prompt: String
 }
 
 @MainActor
@@ -24,6 +32,10 @@ final class SmithVoiceSession: ObservableObject {
     @Published private(set) var outputVolume = 62
     @Published var safariDestination: SmithSafariDestination?
     @Published var requestedPage: String?
+    @Published private(set) var imageJobStatus: String?
+    @Published private(set) var imageJobId: String?
+    @Published private(set) var imageHistory: [SmithImageHistoryItem] = []
+    @Published var generatedImage: SmithGeneratedImage?
 
     private let api: SmithAPI
     private let audio = SmithAudioController()
@@ -196,7 +208,33 @@ final class SmithVoiceSession: ObservableObject {
               let type = payload["type"] as? String else { return }
 
         switch type {
+        case "save_image_request":
+            let jobID = payload["jobId"] as? String ?? ""
+            let requestID = payload["requestId"] as? String ?? ""
+            Task { [weak self] in await self?.saveGeneratedImage(jobID: jobID, requestID: requestID) }
+        case "image_job_update":
+            let jobID = payload["jobId"] as? String ?? ""
+            let status = payload["status"] as? String ?? ""
+            guard !jobID.isEmpty else { break }
+            imageJobId = jobID
+            imageJobStatus = status
+            if status == "completed" {
+                Task { await refreshImageHistory() }
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        let (data, mimeType) = try await api.imageData(jobID: jobID)
+                        generatedImage = SmithGeneratedImage(id: jobID, data: data, mimeType: mimeType,
+                            prompt: payload["prompt"] as? String ?? "Generated image")
+                    } catch {
+                        lastError = "Smith generated the image, but it could not be loaded: \(error.localizedDescription)"
+                    }
+                }
+            } else if status == "failed" || status == "cancelled" {
+                lastError = payload["errorMessage"] as? String ?? "Image generation \(status)."
+            }
         case "ready":
+            Task { await refreshImageHistory() }
             commandChannelConnected = true
             connected = true
             state = muted ? "MUTED" : "LISTENING"
@@ -274,6 +312,63 @@ final class SmithVoiceSession: ObservableObject {
             }
         default:
             break
+        }
+    }
+
+    func cancelActiveImageGeneration() {
+        guard let imageJobId else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await api.cancelImageJob(jobID: imageJobId)
+                imageJobStatus = "cancelled"
+            }
+            catch { lastError = "Image cancellation could not be requested: \(error.localizedDescription)" }
+        }
+    }
+
+    func dismissGeneratedImage() { generatedImage = nil }
+
+    func refreshImageHistory() async {
+        do { imageHistory = try await api.imageHistory() }
+        catch { lastError = "Image history could not be loaded: \(error.localizedDescription)" }
+    }
+
+    func openImageHistory(_ item: SmithImageHistoryItem) {
+        guard item.status == "completed" else { return }
+        imageJobId = item.jobId
+        imageJobStatus = item.status
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (data, mimeType) = try await api.imageData(jobID: item.jobId)
+                generatedImage = SmithGeneratedImage(id: item.jobId, data: data, mimeType: mimeType, prompt: item.prompt)
+            } catch { lastError = "That saved image could not be loaded: \(error.localizedDescription)" }
+        }
+    }
+
+    private func saveGeneratedImage(jobID: String, requestID: String) async {
+        guard !jobID.isEmpty, !requestID.isEmpty else { return }
+        do {
+            let (data, _) = try await api.imageData(jobID: jobID)
+            let authorization = await withCheckedContinuation { continuation in
+                PHPhotoLibrary.requestAuthorization(for: .addOnly) { continuation.resume(returning: $0) }
+            }
+            guard authorization == .authorized || authorization == .limited else {
+                try? await send(["type": "image_save_result", "requestId": requestID, "jobId": jobID,
+                                 "success": false, "message": "Photos access was not granted."])
+                return
+            }
+            let saved = await withCheckedContinuation { continuation in
+                PHPhotoLibrary.shared().performChanges {
+                    PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: nil)
+                } completionHandler: { success, _ in continuation.resume(returning: success) }
+            }
+            try? await send(["type": "image_save_result", "requestId": requestID, "jobId": jobID,
+                             "success": saved, "message": saved ? "Saved to Photos." : "Photos could not save this image."])
+        } catch {
+            try? await send(["type": "image_save_result", "requestId": requestID, "jobId": jobID,
+                             "success": false, "message": "Image could not be loaded for saving."])
         }
     }
 

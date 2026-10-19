@@ -1,6 +1,17 @@
 import Foundation
 import UIKit
 
+struct SmithImageHistoryItem: Decodable, Identifiable {
+    let jobId: String
+    let status: String
+    let prompt: String
+    let mimeType: String?
+    let imageSha256: String?
+    let errorMessage: String?
+    let createdAt: String
+    var id: String { jobId }
+}
+
 actor SmithAPI {
     struct RegistrationResponse: Decodable {
         let deviceToken: String
@@ -120,6 +131,29 @@ actor SmithAPI {
     }
 
     func deviceID() throws -> String { try persistentDeviceID() }
+
+    func imageData(jobID: String) async throws -> (Data, String) {
+        let token = try await session()
+        var request = try request(path: "/api/smith/core2/images/jobs/\(jobID)/image", method: "GET")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response)
+        return (data, response.mimeType ?? "image/png")
+    }
+
+    func cancelImageJob(jobID: String) async throws {
+        let token = try await session()
+        var request = try request(path: "/api/smith/core2/images/jobs/\(jobID)/cancel", method: "POST")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        let (_, response) = try await URLSession.shared.data(for: request)
+        try validate(response)
+    }
+
+    func imageHistory() async throws -> [SmithImageHistoryItem] {
+        try await get(path: "/api/smith/core2/images/jobs")
+    }
 
     func revokeLocalDevice() {
         SmithKeychain.remove("device-token")

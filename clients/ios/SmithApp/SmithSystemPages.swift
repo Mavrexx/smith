@@ -59,11 +59,31 @@ struct SmithVisionPage: View {
                 Text(screenError).font(.caption2.monospaced()).foregroundStyle(.orange)
                     .padding(.horizontal, 22)
             }
+            if !model.voice.imageHistory.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("RECENT SMITH IMAGES").font(.system(size: 10, weight: .semibold, design: .monospaced)).tracking(1.2).foregroundStyle(.cyan)
+                    ForEach(model.voice.imageHistory.prefix(5)) { item in
+                        Button { model.voice.openImageHistory(item) } label: {
+                            HStack {
+                                Image(systemName: item.status == "completed" ? "photo" : "clock")
+                                Text(item.prompt).lineLimit(1)
+                                Spacer()
+                                Text(item.status.uppercased()).font(.system(size: 8, design: .monospaced))
+                            }
+                            .font(.caption).padding(9).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain).disabled(item.status != "completed")
+                    }
+                }
+                .padding(.horizontal, 18)
+            }
             Spacer()
         }
         .task {
             model.prepareScreenShare()
             if !model.voice.connected { await model.wake() }
+            await model.voice.refreshImageHistory()
         }
         .onChange(of: photo) { _, item in
             guard let item else { return }
